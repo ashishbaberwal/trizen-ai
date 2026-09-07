@@ -1,0 +1,89 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - link "FrameFlow" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - img [ref=e6]
+        - text: FrameFlow
+      - navigation "Main" [ref=e9]:
+        - link "Overview" [ref=e10] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e11]
+          - text: Overview
+        - link "Events" [ref=e16] [cursor=pointer]:
+          - /url: /dashboard/events
+          - img [ref=e17]
+          - text: Events
+        - link "Galleries" [ref=e19] [cursor=pointer]:
+          - /url: /dashboard/galleries
+          - img [ref=e20]
+          - text: Galleries
+        - link "Team" [ref=e25] [cursor=pointer]:
+          - /url: /dashboard/team
+          - img [ref=e26]
+          - text: Team
+        - link "Settings" [ref=e29] [cursor=pointer]:
+          - /url: /dashboard/settings
+          - img [ref=e30]
+          - text: Settings
+      - generic [ref=e36]:
+        - generic [ref=e38]: AK
+        - generic [ref=e39]:
+          - paragraph [ref=e40]: Alex Kumar
+          - generic [ref=e42]: Admin
+        - button "Toggle theme" [ref=e43] [cursor=pointer]
+        - link "Log out" [ref=e44] [cursor=pointer]:
+          - /url: /login
+          - img
+    - generic [ref=e45]:
+      - banner [ref=e46]:
+        - generic [ref=e47]:
+          - paragraph [ref=e48]: Overview
+          - navigation "Breadcrumb" [ref=e49]:
+            - list [ref=e50]:
+              - listitem [ref=e51]:
+                - generic [ref=e52]: Overview
+        - generic [ref=e53]:
+          - link "New event" [ref=e54] [cursor=pointer]:
+            - /url: /dashboard/events
+            - img
+            - text: New event
+          - generic [ref=e55]:
+            - img
+            - searchbox "Search" [ref=e56]
+          - button "Notifications" [ref=e57] [cursor=pointer]:
+            - img
+          - button "Open profile menu" [ref=e59] [cursor=pointer]:
+            - generic [ref=e61]: AK
+      - main [ref=e62]:
+        - generic [ref=e63]:
+          - heading "Good morning, Alex" [level=1] [ref=e64]
+          - paragraph [ref=e65]: Here's what's happening across your events this monday.
+          - generic [ref=e66]:
+            - generic [ref=e68]:
+              - paragraph [ref=e69]: Active events
+              - img [ref=e70]
+            - generic [ref=e74]:
+              - paragraph [ref=e75]: Total photos
+              - img [ref=e76]
+            - generic [ref=e82]:
+              - paragraph [ref=e83]: Published galleries
+              - img [ref=e84]
+            - generic [ref=e91]:
+              - paragraph [ref=e92]: Team members
+              - img [ref=e93]
+          - generic [ref=e97]:
+            - region "Photos uploaded" [ref=e98]:
+              - generic [ref=e99]:
+                - heading "Photos uploaded" [level=2] [ref=e100]
+                - generic [ref=e101]: Last 7 days
+            - region "Recent activity" [ref=e103]:
+              - heading "Recent activity" [level=2] [ref=e104]
+          - region "Recent events" [ref=e126]:
+            - generic [ref=e127]:
+              - heading "Recent events" [level=2] [ref=e128]
+              - link "View all" [ref=e129] [cursor=pointer]:
+                - /url: /dashboard/events
+  - region "Notifications alt+T"
+  - button "Open Next.js Dev Tools" [ref=e151] [cursor=pointer]:
+    - img [ref=e152]

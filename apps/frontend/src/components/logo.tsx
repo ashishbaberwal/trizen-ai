@@ -1,0 +1,28 @@
+import Link from "next/link";
+
+import { cn } from "@/lib/utils";
+
+export function Logo({ className, href = "/" }: { className?: string; href?: string }) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex items-center gap-2 font-display text-lg font-semibold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md",
+        className
+      )}
+    >
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+        <rect x="2.5" y="2.5" width="19" height="19" rx="3" className="fill-foreground" />
+        <path
+          d="M8.5 12.2l2.4 2.9 4.8-6"
+          stroke="var(--background)"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
+      </svg>
+      FrameFlow
+    </Link>
+  );
+}

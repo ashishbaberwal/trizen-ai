@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* Neutral studio palette — cool paper, ink, one cobalt accent */
+  --background: #fcfcfb;
+  --foreground: #1a1a19;
+  --card: #ffffff;
+  --card-foreground: #1a1a19;
+  --popover: #ffffff;
+  --popover-foreground: #1a1a19;
+  --primary: #1a1a19;
+  --primary-foreground: #fcfcfb;
+  --secondary: #f3f3f0;
+  --secondary-foreground: #1a1a19;
+  --muted: #f3f3f0;
+  --muted-foreground: #70706b;
+  --accent: #eef2fc;
+  --accent-foreground: #2b3f8f;
+  --destructive: #bb2d20;
+  --destructive-foreground: #fcfcfb;
+  --success: #226e46;
+  --warning: #935f00;
+  --border: #e5e5e0;
+  --input: #dcdcda;
+  --ring: #4263eb;
+
+  /* chart */
+  --chart: #4263eb;
+  --chart-grid: #e5e5e0;
+
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: #1a1a19;
+  --foreground: #ededec;
+  --card: #222221;
+  --card-foreground: #ededec;
+  --popover: #222221;
+  --popover-foreground: #ededec;
+  --primary: #ededec;
+  --primary-foreground: #1a1a19;
+  --secondary: #2c2c2b;
+  --secondary-foreground: #ededec;
+  --muted: #2c2c2b;
+  --muted-foreground: #9d9d97;
+  --accent: #262c42;
+  --accent-foreground: #b8c4f2;
+  --destructive: #e0665a;
+  --destructive-foreground: #1a1a19;
+  --success: #63c28e;
+  --warning: #dcb45c;
+  --border: #33332f;
+  --input: #3c3c39;
+  --ring: #6d89dc;
+
+  --chart: #6d89dc;
+  --chart-grid: #33332f;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart: var(--chart);
+  --color-chart-grid: var(--chart-grid);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-display: var(--font-seravek), var(--font-geist-sans), ui-sans-serif, sans-serif;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --animate-fade-up: fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-in: fade-in 0.3s ease-out both;
+  --animate-scale-in: scale-in 0.16s ease-out both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: "ss01" on, "cv02" on;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
