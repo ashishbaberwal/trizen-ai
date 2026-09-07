@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { currentUser } from "@/lib/mock-data";
 import type { User, UserRole } from "@/types";
+import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,11 +80,12 @@ function UserBlock({ user }: { user: User }) {
         </div>
       </div>
       <ThemeToggle />
-      <Button variant="ghost" size="icon" aria-label="Log out" asChild>
-        <Link href="/login">
+      <SignOutButton redirectUrl="/login">
+        <Button variant="ghost" size="icon" aria-label="Log out">
           <LogOut className="size-4" />
-        </Link>
-      </Button>
+        </Button>
+      </SignOutButton>
+      <UserButton />
     </div>
   );
 }

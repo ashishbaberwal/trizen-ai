@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import { currentUser } from "@/lib/mock-data";
 import type { User } from "@/types";
+import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -136,11 +137,16 @@ export function TopHeader({ crumbs, title, onOpenNav, actions, user = currentUse
               <Link href="/dashboard/settings">Settings</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link href="/login">Log out</Link>
+            <DropdownMenuItem>
+              <SignOutButton redirectUrl="/login">
+                <button type="button" className="w-full text-left cursor-pointer">
+                  Log out
+                </button>
+              </SignOutButton>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <UserButton />
       </div>
     </header>
   );

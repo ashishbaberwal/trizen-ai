@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Sora } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
@@ -38,8 +39,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        <ThemeProvider>{children}</ThemeProvider>
-        <Toaster position="bottom-right" />
+        <ClerkProvider>
+          <ThemeProvider>{children}</ThemeProvider>
+          <Toaster position="bottom-right" />
+        </ClerkProvider>
       </body>
     </html>
   );

@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/logo";
+import { SignInButton, SignUpButton, Show } from "@clerk/nextjs";
 
 const navLinks = [
   { label: "Product", href: "#features" },
@@ -320,12 +321,23 @@ function SiteHeader({
           ))}
         </nav>
         <div className="ml-auto hidden items-center gap-2 md:flex">
-          <Button variant="ghost" asChild>
-            <Link href="/login">Log in</Link>
-          </Button>
-          <Button asChild>
-            <Link href="/register">Get started</Link>
-          </Button>
+          <Show when="signed-out">
+            <Button variant="ghost" asChild>
+              <SignInButton mode="redirect" fallbackRedirectUrl="/dashboard">
+                Log in
+              </SignInButton>
+            </Button>
+            <Button asChild>
+              <SignUpButton mode="redirect" fallbackRedirectUrl="/dashboard">
+                Get started
+              </SignUpButton>
+            </Button>
+          </Show>
+          <Show when="signed-in">
+            <Button variant="ghost" asChild>
+              <Link href="/dashboard">Dashboard</Link>
+            </Button>
+          </Show>
         </div>
         <button
           className="ml-auto rounded-md p-2 hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden cursor-pointer"
@@ -351,12 +363,23 @@ function SiteHeader({
             ))}
           </nav>
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <Button variant="outline" asChild>
-              <Link href="/login">Log in</Link>
-            </Button>
-            <Button asChild>
-              <Link href="/register">Get started</Link>
-            </Button>
+            <Show when="signed-out">
+              <Button variant="outline" asChild>
+                <SignInButton mode="redirect" fallbackRedirectUrl="/dashboard">
+                  Log in
+                </SignInButton>
+              </Button>
+              <Button asChild>
+                <SignUpButton mode="redirect" fallbackRedirectUrl="/dashboard">
+                  Get started
+                </SignUpButton>
+              </Button>
+            </Show>
+            <Show when="signed-in">
+              <Button asChild>
+                <Link href="/dashboard">Dashboard</Link>
+              </Button>
+            </Show>
           </div>
         </div>
       )}
