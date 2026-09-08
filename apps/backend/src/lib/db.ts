@@ -13,6 +13,25 @@ export type DbUser = {
   updated_at: Date;
 };
 
+export type DbEvent = {
+  id: string;
+  name: string;
+  description: string;
+  location: string;
+  event_date: string;
+  status: "draft" | "active" | "completed";
+  created_by: string;
+  created_at: Date;
+  updated_at: Date;
+};
+
+export type DbEventMember = {
+  event_id: string;
+  user_id: string;
+  added_by: string | null;
+  added_at: Date;
+};
+
 let pool: pg.Pool | null = null;
 
 export function getPool(env: Env): pg.Pool {
@@ -81,6 +100,8 @@ export async function checkDatabase(env: Env): Promise<boolean> {
 /**
  * Map a verified Clerk user to an application row. Creates the row on first
  * sighting (JIT provisioning) and keeps name/email in sync with Clerk.
+ * The Clerk user ID is the stable identity — repeated sign-ins never create
+ * duplicate rows, and the role column is never overwritten here.
  */
 export async function upsertUserFromClerk(
   env: Env,
@@ -95,4 +116,232 @@ export async function upsertUserFromClerk(
     [clerkUser.id, clerkUser.name, clerkUser.email]
   );
   return result.rows[0]!;
+}
+
+/** Fetch the application user row for a verified Clerk user ID. */
+export async function getUserByClerkId(env: Env, clerkUserId: string): Promise<DbUser | null> {
+  const result = await getPool(env).query<DbUser>(
+    "SELECT * FROM users WHERE clerk_user_id = $1",
+    [clerkUserId]
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function getUserById(env: Env, id: string): Promise<DbUser | null> {
+  const result = await getPool(env).query<DbUser>("SELECT * FROM users WHERE id = $1", [id]);
+  return result.rows[0] ?? null;
+}
+
+/** All application users, newest first. */
+export async function listUsers(env: Env): Promise<DbUser[]> {
+  const result = await getPool(env).query<DbUser>(
+    "SELECT * FROM users ORDER BY created_at DESC"
+  );
+  return result.rows;
+}
+
+/** Promote/demote an application user. Called only from admin-gated routes. */
+export async function setUserRole(
+  env: Env,
+  userId: string,
+  role: "ADMIN" | "TEAM_MEMBER"
+): Promise<DbUser | null> {
+  const result = await getPool(env).query<DbUser>(
+    "UPDATE users SET role = $2, updated_at = now() WHERE id = $1 RETURNING *",
+    [userId, role]
+  );
+  return result.rows[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+export interface CreateEventInput {
+  name: string;
+  description?: string;
+  location?: string;
+  event_date: string;
+  status?: "draft" | "active" | "completed";
+}
+
+export async function createEvent(
+  env: Env,
+  createdByUserId: string,
+  input: CreateEventInput
+): Promise<DbEvent> {
+  const result = await getPool(env).query<DbEvent>(
+    `INSERT INTO events (name, description, location, event_date, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [
+      input.name,
+      input.description ?? "",
+      input.location ?? "",
+      input.event_date,
+      input.status ?? "draft",
+      createdByUserId,
+    ]
+  );
+  return result.rows[0]!;
+}
+
+export async function listEvents(env: Env): Promise<DbEvent[]> {
+  const result = await getPool(env).query<DbEvent>(
+    "SELECT * FROM events ORDER BY created_at DESC"
+  );
+  return result.rows;
+}
+
+/** Events a user can access: all events for admins, assigned events for members. */
+export async function listEventsForUser(env: Env, user: DbUser): Promise<DbEvent[]> {
+  if (user.role === "ADMIN") {
+    return listEvents(env);
+  }
+  const result = await getPool(env).query<DbEvent>(
+    `SELECT e.* FROM events e
+     JOIN event_team_members etm ON etm.event_id = e.id
+     WHERE etm.user_id = $1
+     ORDER BY e.created_at DESC`,
+    [user.id]
+  );
+  return result.rows;
+}
+
+export async function getEventById(env: Env, id: string): Promise<DbEvent | null> {
+  const result = await getPool(env).query<DbEvent>("SELECT * FROM events WHERE id = $1", [id]);
+  return result.rows[0] ?? null;
+}
+
+export interface UpdateEventInput {
+  name?: string;
+  description?: string;
+  location?: string;
+  event_date?: string;
+  status?: "draft" | "active" | "completed";
+}
+
+export async function updateEvent(
+  env: Env,
+  id: string,
+  input: UpdateEventInput
+): Promise<DbEvent | null> {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  let param = 1;
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined) continue;
+    fields.push(`${key} = $${param++}`);
+    values.push(value);
+  }
+  if (fields.length === 0) return getEventById(env, id);
+  values.push(id);
+  const result = await getPool(env).query<DbEvent>(
+    `UPDATE events SET ${fields.join(", ")}, updated_at = now() WHERE id = $${param} RETURNING *`,
+    values
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function deleteEvent(env: Env, id: string): Promise<boolean> {
+  const result = await getPool(env).query("DELETE FROM events WHERE id = $1", [id]);
+  return (result.rowCount ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Event team membership
+// ---------------------------------------------------------------------------
+
+/** Relationship check — the only source of event access for team members. */
+export async function isEventMember(
+  env: Env,
+  eventId: string,
+  userId: string
+): Promise<boolean> {
+  const result = await getPool(env).query(
+    "SELECT 1 FROM event_team_members WHERE event_id = $1 AND user_id = $2",
+    [eventId, userId]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Assign a user to an event. Idempotent: re-assignment never duplicates the
+ * relationship (primary key (event_id, user_id) + ON CONFLICT DO NOTHING).
+ */
+export async function addEventMember(
+  env: Env,
+  eventId: string,
+  userId: string,
+  addedBy: string
+): Promise<DbEventMember> {
+  const result = await getPool(env).query<DbEventMember>(
+    `INSERT INTO event_team_members (event_id, user_id, added_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (event_id, user_id) DO NOTHING
+     RETURNING *`,
+    [eventId, userId, addedBy]
+  );
+  if (result.rows[0]) return result.rows[0];
+  // Already existed — return the existing relationship.
+  const existing = await getPool(env).query<DbEventMember>(
+    "SELECT * FROM event_team_members WHERE event_id = $1 AND user_id = $2",
+    [eventId, userId]
+  );
+  return existing.rows[0]!;
+}
+
+export async function removeEventMember(
+  env: Env,
+  eventId: string,
+  userId: string
+): Promise<boolean> {
+  const result = await getPool(env).query(
+    "DELETE FROM event_team_members WHERE event_id = $1 AND user_id = $2",
+    [eventId, userId]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/** All members of an event, joined with their user profiles. */
+export async function listEventMembers(
+  env: Env,
+  eventId: string
+): Promise<Array<DbEventMember & { user: DbUser }>> {
+  const result = await getPool(env).query<{
+    event_id: string;
+    user_id: string;
+    added_by: string | null;
+    added_at: Date;
+    clerk_user_id: string;
+    name: string;
+    email: string;
+    role: "ADMIN" | "TEAM_MEMBER";
+    user_created_at: Date;
+    user_updated_at: Date;
+  }>(
+    `SELECT etm.event_id, etm.user_id, etm.added_by, etm.added_at,
+            u.clerk_user_id, u.name, u.email, u.role,
+            u.created_at AS "user_created_at", u.updated_at AS "user_updated_at"
+     FROM event_team_members etm
+     JOIN users u ON u.id = etm.user_id
+     WHERE etm.event_id = $1
+     ORDER BY etm.added_at ASC`,
+    [eventId]
+  );
+  return result.rows.map((row) => ({
+    event_id: row.event_id,
+    user_id: row.user_id,
+    added_by: row.added_by,
+    added_at: row.added_at,
+    user: {
+      id: row.user_id,
+      clerk_user_id: row.clerk_user_id,
+      name: row.name,
+      email: row.email,
+      role: row.role,
+      created_at: row.user_created_at,
+      updated_at: row.user_updated_at,
+    },
+  }));
 }
