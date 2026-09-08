@@ -17,6 +17,7 @@ import {
 
 import { formatDate, formatNumber, timeAgo } from "@/lib/utils";
 import { eventService, galleryService, photoService, teamService } from "@/lib/services";
+import { useCurrentUser } from "@/lib/api/use-current-user";
 import type { Event, Gallery, Photo, TeamMember } from "@/types";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { EventStatusBadge, GalleryStatusBadge } from "@/components/dashboard/status-badge";
@@ -27,10 +28,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { UploadModal } from "@/components/photos/upload-modal";
 import { AddMemberModal } from "@/components/team/add-member-modal";
+import { EventTeamPanel } from "@/components/team/event-team-panel";
 
 export default function EventDetailPage() {
   const params = useParams<{ eventId: string }>();
   const eventId = params.eventId;
+  const user = useCurrentUser();
   const [loading, setLoading] = React.useState(true);
   const [event, setEvent] = React.useState<Event | null>(null);
   const [members, setMembers] = React.useState<TeamMember[]>([]);
@@ -262,40 +265,7 @@ export default function EventDetailPage() {
 
           {/* Team */}
           <TabsContent value="team">
-            <div className="rounded-xl border">
-              <div className="flex items-center justify-between border-b px-5 py-3.5">
-                <h2 className="font-display text-sm font-semibold">Team members</h2>
-                <Button size="sm" variant="outline" onClick={() => setMemberOpen(true)}>
-                  <UserPlus /> Add member
-                </Button>
-              </div>
-              <ul className="divide-y">
-                {members.map((m) => (
-                  <li key={m.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                    <Avatar className="size-9">
-                      <AvatarFallback className="text-xs">
-                        {m.name.split(" ").map((n) => n[0]).join("")}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">
-                        {m.name}
-                        {m.role === "admin" && (
-                          <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-900 dark:bg-sky-950 dark:text-sky-200">
-                            Admin
-                          </span>
-                        )}
-                      </p>
-                      <p className="truncate text-xs text-muted-foreground">{m.email}</p>
-                    </div>
-                    <div className="text-right text-xs text-muted-foreground">
-                      <p>{formatNumber(m.photosUploaded)} photos</p>
-                      <p>Joined {formatDate(m.joinedAt, { month: "short", day: "numeric" })}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <EventTeamPanel eventId={event.id} isAdmin={user?.role === "admin"} />
           </TabsContent>
 
           {/* Galleries */}
