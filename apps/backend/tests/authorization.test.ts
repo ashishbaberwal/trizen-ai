@@ -149,6 +149,62 @@ describeIf(hasDb)("Phase 2 authorization", () => {
     await getPool(env).query("DELETE FROM users WHERE email = 'invited@frameflow.test'");
   });
 
+  it("invited member signing in adopts the pending row (no duplicates)", async () => {
+    // Admin invites someone — a pending:<email> row is created.
+    const invite = await request(app)
+      .post("/api/v1/team-members/invite")
+      .set(adminAuth)
+      .send({ name: "Joining Member", email: "joining@frameflow.test" });
+    expect([200, 201]).toContain(invite.status);
+    expect(invite.body.member.pending).toBe(true);
+
+    // The invitee signs in — JIT upsert must adopt the pending row, not
+    // create a second row for the same email.
+    const { upsertUserFromClerk } = await import("../src/lib/db.js");
+    const claimed = await upsertUserFromClerk(env, {
+      id: "clerk_joining_1",
+      name: "Joining Member",
+      email: "joining@frameflow.test",
+    });
+
+    // Exactly one row for that email, and it carries the real Clerk ID.
+    const rows = await getPool(env).query<{ clerk_user_id: string }>(
+      "SELECT clerk_user_id FROM users WHERE email = 'joining@frameflow.test'"
+    );
+    expect(rows.rowCount).toBe(1);
+    expect(rows.rows[0]!.clerk_user_id).toBe("clerk_joining_1");
+    expect(claimed.clerk_user_id).toBe("clerk_joining_1");
+    expect(claimed.role).toBe("TEAM_MEMBER");
+
+    // Pre-assigning via the pending row's memberships must survive the claim:
+    // assign the (now claimed) user to the event and verify access.
+    const assign = await request(app)
+      .post(`/api/v1/events/${eventId}/team-members`)
+      .set(adminAuth)
+      .send({ user_id: claimed.id });
+    expect(assign.status).toBe(201);
+    const access = await request(app)
+      .get(`/api/v1/events/${eventId}`)
+      .set({ Authorization: "Bearer valid.clerk_joining_1" });
+    expect(access.status).toBe(200);
+
+    // Signing in again must not duplicate anything.
+    await upsertUserFromClerk(env, {
+      id: "clerk_joining_1",
+      name: "Joining Member",
+      email: "joining@frameflow.test",
+    });
+    const after = await getPool(env).query(
+      "SELECT COUNT(*)::int AS n FROM users WHERE email = 'joining@frameflow.test'"
+    );
+    expect(after.rows[0]!.n).toBe(1);
+
+    // Cleanup
+    await getPool(env).query(
+      "DELETE FROM users WHERE clerk_user_id = 'clerk_joining_1'"
+    );
+  });
+
   it("admin can create events; member can list but not create", async () => {
     const res = await request(app)
       .post("/api/v1/events")

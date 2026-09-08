@@ -102,12 +102,21 @@ export async function checkDatabase(env: Env): Promise<boolean> {
  * sighting (JIT provisioning) and keeps name/email in sync with Clerk.
  * The Clerk user ID is the stable identity — repeated sign-ins never create
  * duplicate rows, and the role column is never overwritten here.
+ *
+ * Pending invites: an admin's invite pre-creates a row keyed by the
+ * `pending:<email>` placeholder. When the real Clerk identity signs in, that
+ * pending row is adopted (clerk_user_id replaced with the real ID) so the
+ * team list keeps a single entry per person and any pre-assigned event
+ * memberships survive the claim.
  */
 export async function upsertUserFromClerk(
   env: Env,
   clerkUser: { id: string; name: string; email: string }
 ): Promise<DbUser> {
-  const result = await getPool(env).query<DbUser>(
+  const pool = getPool(env);
+
+  // 1. Already linked? Keep name/email fresh, never touch the role.
+  const linked = await pool.query<DbUser>(
     `INSERT INTO users (clerk_user_id, name, email, role)
      VALUES ($1, $2, $3, 'TEAM_MEMBER')
      ON CONFLICT (clerk_user_id)
@@ -115,7 +124,28 @@ export async function upsertUserFromClerk(
      RETURNING *`,
     [clerkUser.id, clerkUser.name, clerkUser.email]
   );
-  return result.rows[0]!;
+  const user = linked.rows[0]!;
+
+  // 2. Adopt a pending invite row for the same email (if one exists and it
+  //    isn't the row we just upserted). Move its event memberships to the
+  //    claimed row, then delete the placeholder.
+  const pending = await pool.query<DbUser>(
+    "SELECT * FROM users WHERE email = $1 AND clerk_user_id = $2",
+    [clerkUser.email, `pending:${clerkUser.email.toLowerCase()}`]
+  );
+  const pendingRow = pending.rows[0];
+  if (pendingRow && pendingRow.id !== user.id) {
+    await pool.query(
+      `INSERT INTO event_team_members (event_id, user_id, added_by, added_at)
+       SELECT event_id, $2, added_by, added_at FROM event_team_members WHERE user_id = $1
+       ON CONFLICT (event_id, user_id) DO NOTHING`,
+      [pendingRow.id, user.id]
+    );
+    await pool.query("DELETE FROM event_team_members WHERE user_id = $1", [pendingRow.id]);
+    await pool.query("DELETE FROM users WHERE id = $1", [pendingRow.id]);
+  }
+
+  return user;
 }
 
 /** Fetch the application user row for a verified Clerk user ID. */
