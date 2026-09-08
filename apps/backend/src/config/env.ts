@@ -14,6 +14,9 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  // Optional path to the Supabase CA certificate for full TLS verification.
+  // Required in production for non-local databases.
+  DATABASE_SSL_CA: z.string().optional(),
   CLERK_SECRET_KEY: z
     .string()
     .min(1, "CLERK_SECRET_KEY is required")

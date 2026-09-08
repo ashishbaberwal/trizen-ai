@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import pg from "pg";
 
 import type { Env } from "../config/env.js";
@@ -16,17 +17,39 @@ let pool: pg.Pool | null = null;
 
 export function getPool(env: Env): pg.Pool {
   if (!pool) {
-    // Supabase serves certificates signed by a public CA, so Node's built-in
-    // trust store verifies them with full TLS checking (no MITM exposure).
-    // Local Postgres (localhost/127.0.0.1) skips SSL entirely.
+    // TLS strategy:
+    // - DATABASE_SSL_CA set → full verification against Supabase's CA cert
+    //   (download from Supabase Dashboard → Database Settings → SSL).
+    // - No CA configured: development falls back to relaxed verification
+    //   (Supabase's pooler CA is not in Node's trust store); production
+    //   requires the CA and refuses to boot without it.
     const isLocal =
       env.DATABASE_URL.includes("localhost") || env.DATABASE_URL.includes("127.0.0.1");
+
+    let ssl: pg.PoolConfig["ssl"] = false;
+    if (!isLocal) {
+      if (env.DATABASE_SSL_CA) {
+        const ca = readFileSync(env.DATABASE_SSL_CA, "utf8");
+        ssl = { rejectUnauthorized: true, ca };
+      } else if (env.NODE_ENV === "production") {
+        throw new Error(
+          "DATABASE_SSL_CA is required in production — set it to the Supabase CA cert path"
+        );
+      } else {
+        console.warn(
+          "WARNING: DATABASE_SSL_CA not set — TLS chain verification relaxed (development only). " +
+            "Download the Supabase CA cert and set DATABASE_SSL_CA for full verification."
+        );
+        ssl = { rejectUnauthorized: false };
+      }
+    }
+
     pool = new pg.Pool({
       connectionString: env.DATABASE_URL,
       max: 10,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
-      ssl: isLocal ? false : { rejectUnauthorized: true },
+      ssl,
     });
     pool.on("error", (err) => {
       // Don't crash the process on idle-client errors; just log.
