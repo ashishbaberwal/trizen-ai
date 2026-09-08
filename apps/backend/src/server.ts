@@ -86,6 +86,8 @@ export async function start() {
 }
 
 // Only boot when run directly (tests import createApp instead).
-if (process.argv[1] && process.argv[1].endsWith("server.js")) {
+const invokedDirectly =
+  process.argv[1] && /server\.(ts|js)$/.test(process.argv[1]);
+if (invokedDirectly) {
   void start();
 }

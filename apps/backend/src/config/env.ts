@@ -1,4 +1,10 @@
+import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
+
+// Load .env.local (preferred) then .env. Variables already set in the real
+// environment always win.
+loadDotenv({ path: ".env.local", quiet: true });
+loadDotenv({ quiet: true });
 
 /**
  * Environment validation — the server refuses to boot with a broken config.
