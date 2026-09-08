@@ -3,8 +3,9 @@
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
-import type { User } from "@/types";
+import { useCurrentUserState } from "@/lib/api/use-current-user";
 import { currentUser } from "@/lib/mock-data";
+import type { User } from "@/types";
 import {
   Dialog,
   DialogContent,
@@ -12,15 +13,16 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { SidebarContent, AppSidebar } from "@/components/dashboard/app-sidebar";
+import { roleNav, AppSidebar } from "@/components/dashboard/app-sidebar";
+import { SidebarInner } from "@/components/dashboard/sidebar-inner";
 import { TopHeader } from "@/components/dashboard/top-header";
+import { usePathname } from "next/navigation";
 
 interface AppShellProps {
   title: string;
   crumbs: { label: string; href?: string }[];
   actions?: React.ReactNode;
   children: React.ReactNode;
-  user?: User;
   maxWidth?: boolean;
 }
 
@@ -29,14 +31,17 @@ export function AppShell({
   crumbs,
   actions,
   children,
-  user = currentUser,
   maxWidth = true,
 }: AppShellProps) {
   const [navOpen, setNavOpen] = React.useState(false);
+  const { user, loading } = useCurrentUserState();
+  const resolved: User = user ?? currentUser;
+  const items = roleNav(resolved.role);
+  const pathname = usePathname();
 
   return (
     <div className="min-h-dvh">
-      <AppSidebar user={user} />
+      <AppSidebar />
       {/* Mobile navigation drawer */}
       <Dialog open={navOpen} onOpenChange={setNavOpen}>
         <DialogContent
@@ -48,7 +53,9 @@ export function AppShell({
             <DialogTitle>Navigation</DialogTitle>
             <DialogDescription>Main application navigation</DialogDescription>
           </DialogHeader>
-          <SidebarContent user={user} />
+          <div className="flex h-full flex-col bg-card">
+            <SidebarInner user={resolved} roleLoading={loading} pathname={pathname} items={items} />
+          </div>
         </DialogContent>
       </Dialog>
 

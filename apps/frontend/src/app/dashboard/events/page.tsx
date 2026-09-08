@@ -5,6 +5,7 @@ import { LayoutGrid, List, Plus, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { eventService } from "@/lib/services";
+import { useCurrentUserState } from "@/lib/api/use-current-user";
 import type { Event, EventStatus } from "@/types";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { EventCard } from "@/components/events/event-card";
@@ -36,6 +37,8 @@ const STATUS_FILTERS: { value: EventStatus | "all"; label: string }[] = [
 ];
 
 export default function EventsPage() {
+  const { user } = useCurrentUserState();
+  const isAdmin = user?.role === "admin";
   const [loading, setLoading] = React.useState(true);
   const [events, setEvents] = React.useState<Event[]>([]);
   const [query, setQuery] = React.useState("");
@@ -69,15 +72,21 @@ export default function EventsPage() {
       title="Events"
       crumbs={[{ label: "Events" }]}
       actions={
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
-          <Plus /> <span className="hidden sm:inline">Create event</span>
-          <span className="sm:hidden">Create</span>
-        </Button>
+        isAdmin ? (
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus /> <span className="hidden sm:inline">Create event</span>
+            <span className="sm:hidden">Create</span>
+          </Button>
+        ) : undefined
       }
     >
       <div className="animate-fade-up">
-        <h1 className="font-display text-2xl font-semibold tracking-tight">Events</h1>
-        <p className="mt-1 text-muted-foreground">Manage your photography projects.</p>
+        <h1 className="font-display text-2xl font-semibold tracking-tight">
+          {isAdmin ? "Events" : "My Events"}
+        </h1>
+        <p className="mt-1 text-muted-foreground">
+          {isAdmin ? "Manage your photography projects." : "Events you've been assigned to."}
+        </p>
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1 sm:max-w-xs">
@@ -143,9 +152,13 @@ export default function EventsPage() {
             description={
               query || status !== "all"
                 ? "Try a different search term or clear the status filter."
-                : "Create your first event and invite your team to start uploading."
+                : isAdmin
+                  ? "Create your first event and invite your team to start uploading."
+                  : "You're not assigned to any events yet. Your admin will assign you soon."
             }
-            action={{ label: "Create event", onClick: () => setCreateOpen(true) }}
+            action={
+              isAdmin ? { label: "Create event", onClick: () => setCreateOpen(true) } : undefined
+            }
             className="rounded-xl border border-dashed"
           />
         ) : (

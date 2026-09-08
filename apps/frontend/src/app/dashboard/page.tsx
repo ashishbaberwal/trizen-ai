@@ -17,6 +17,7 @@ import {
 import { formatNumber, timeAgo } from "@/lib/utils";
 import { uploadActivity } from "@/lib/mock-data";
 import { dashboardService, eventService } from "@/lib/services";
+import { useCurrentUserState } from "@/lib/api/use-current-user";
 import type { ActivityItem, Event } from "@/types";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { StatCard } from "@/components/dashboard/stat-card";
@@ -35,6 +36,8 @@ const activityIcons = {
 } as const;
 
 export default function DashboardPage() {
+  const { user } = useCurrentUserState();
+  const isAdmin = user?.role === "admin";
   const [loading, setLoading] = React.useState(true);
   const [stats, setStats] = React.useState<Awaited<ReturnType<typeof dashboardService.getStats>> | null>(null);
   const [events, setEvents] = React.useState<Event[]>([]);
@@ -65,19 +68,23 @@ export default function DashboardPage() {
       title="Overview"
       crumbs={[{ label: "Overview" }]}
       actions={
-        <Button size="sm" asChild className="hidden md:inline-flex">
-          <Link href="/dashboard/events">
-            <Plus /> New event
-          </Link>
-        </Button>
+        isAdmin ? (
+          <Button size="sm" asChild className="hidden md:inline-flex">
+            <Link href="/dashboard/events">
+              <Plus /> New event
+            </Link>
+          </Button>
+        ) : undefined
       }
     >
       <div className="animate-fade-up">
         <h1 className="font-display text-2xl font-semibold tracking-tight md:text-3xl">
-          Good morning, Alex
+          Good morning, {user?.name?.split(" ")[0] || "there"}
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Here&apos;s what&apos;s happening across your events this {today.toLowerCase()}.
+          {isAdmin
+            ? `Here's what's happening across your events this ${today.toLowerCase()}.`
+            : "Here are the events you've been assigned to."}
         </p>
 
         <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
