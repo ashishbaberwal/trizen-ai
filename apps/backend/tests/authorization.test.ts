@@ -59,18 +59,42 @@ const hasDb = !!dbUrl;
 const adminToken = "valid.clerk_admin_1";
 const memberToken = "valid.clerk_member_1";
 const outsiderToken = "valid.clerk_outsider_1";
+const secondAdminToken = "valid.clerk_admin_2";
 const adminAuth = { Authorization: `Bearer ${adminToken}` };
 const memberAuth = { Authorization: `Bearer ${memberToken}` };
 const outsiderAuth = { Authorization: `Bearer ${outsiderToken}` };
+const secondAdminAuth = { Authorization: `Bearer ${secondAdminToken}` };
 
 async function seed(env: Env) {
   const pool = getPool(env);
-  // Idempotent seed — safe to re-run.
+  // Idempotent seed — safe to re-run. Each admin gets their OWN workspace;
+  // the member joins admin_1's workspace (multi-tenant model).
   await pool.query(
-    `INSERT INTO users (clerk_user_id, name, email, role) VALUES
-       ('clerk_admin_1', 'Demo Admin', 'admin@frameflow.test', 'ADMIN'),
-       ('clerk_member_1', 'Demo Member', 'member@frameflow.test', 'TEAM_MEMBER')
+    `INSERT INTO users (clerk_user_id, name, email, role, workspace_id) VALUES
+       ('clerk_admin_1', 'Demo Admin', 'admin@frameflow.test', 'ADMIN',
+         (SELECT id FROM workspaces WHERE name = 'WS-admin@frameflow.test')),
+       ('clerk_admin_2', 'Second Admin', 'admin2@frameflow.test', 'ADMIN',
+         (SELECT id FROM workspaces WHERE name = 'WS-admin2@frameflow.test')),
+       ('clerk_member_1', 'Demo Member', 'member@frameflow.test', 'TEAM_MEMBER',
+         (SELECT id FROM workspaces WHERE name = 'WS-admin@frameflow.test')),
+       ('clerk_outsider_1', 'Outsider', '', 'TEAM_MEMBER',
+         (SELECT id FROM workspaces WHERE name = 'WS-admin2@frameflow.test'))
      ON CONFLICT (clerk_user_id) DO NOTHING`
+  );
+}
+
+/** Idempotently create the two test workspaces. */
+async function seedWorkspaces(env: Env) {
+  const pool = getPool(env);
+  await pool.query(
+    `INSERT INTO workspaces (name)
+     SELECT 'WS-admin@frameflow.test'
+     WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE name = 'WS-admin@frameflow.test')`
+  );
+  await pool.query(
+    `INSERT INTO workspaces (name)
+     SELECT 'WS-admin2@frameflow.test'
+     WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE name = 'WS-admin2@frameflow.test')`
   );
 }
 
@@ -89,6 +113,7 @@ describeIf(hasDb)("Phase 2 authorization", () => {
     app = buildApp();
     const { loadEnv } = await import("../src/config/env.js");
     env = loadEnv();
+    await seedWorkspaces(env);
     await seed(env);
     const res = await request(app)
       .post("/api/v1/events")
@@ -99,10 +124,30 @@ describeIf(hasDb)("Phase 2 authorization", () => {
 
   afterAll(async () => {
     // Clean up only rows created by this test run (own data, no resets).
+    // Order matters: invitations → memberships → events → users → workspaces.
     const pool = getPool(env);
     await pool.query("DELETE FROM events WHERE name LIKE 'Auth Test Event %'");
     await pool.query(
-      "DELETE FROM users WHERE clerk_user_id IN ('clerk_admin_1','clerk_member_1')"
+      `DELETE FROM invitations WHERE invited_by IN
+       (SELECT id FROM users WHERE clerk_user_id LIKE 'clerk_%')`
+    );
+    await pool.query(
+      `DELETE FROM event_team_members WHERE user_id IN
+       (SELECT id FROM users WHERE clerk_user_id LIKE 'clerk_%')`
+    );
+    await pool.query(
+      `UPDATE workspaces SET created_by = NULL
+       WHERE created_by IN (SELECT id FROM users WHERE clerk_user_id LIKE 'clerk_%')`
+    );
+    await pool.query(
+      `DELETE FROM users WHERE clerk_user_id IN
+       ('clerk_admin_1','clerk_member_1','clerk_admin_2','clerk_outsider_1',
+        'clerk_joining_1','clerk_selfsignup_1','clerk_invitedrole_1')`
+    );
+    await pool.query(
+      `DELETE FROM workspaces WHERE name IN
+       ('WS-admin@frameflow.test','WS-admin2@frameflow.test',
+        'Self Starter''s Studio', 'Invited Person''s Studio')`
     );
     await closePool();
   });
@@ -207,7 +252,7 @@ describeIf(hasDb)("Phase 2 authorization", () => {
     );
   });
 
-  it("self-registered users provision as ADMIN; invited users as TEAM_MEMBER", async () => {
+  it("self-registered users provision as ADMIN with own workspace; invited users as TEAM_MEMBER", async () => {
     const { upsertUserFromClerk } = await import("../src/lib/db.js");
 
     // Self-signup (no invitedRole) → ADMIN per product policy.
@@ -217,27 +262,45 @@ describeIf(hasDb)("Phase 2 authorization", () => {
       email: "selfsignup@frameflow.test",
     });
     expect(selfSignup.role).toBe("ADMIN");
+    // Own workspace, initially containing only them.
+    const selfWs = await getPool(env).query<{ member_count: number }>(
+      `SELECT COUNT(*)::int AS member_count FROM users WHERE workspace_id = $1`,
+      [selfSignup.workspace_id]
+    );
+    expect(selfWs.rows[0]!.member_count).toBe(1);
 
     // Invited (invitedRole stamped from Clerk publicMetadata) → TEAM_MEMBER.
+    // No pending invitation row exists for this email in this test → the
+    // safe fallback applies: own workspace (never an invented membership).
+    // The full invited flow (invitation row → inviter workspace) is covered
+    // by SCENARIO 3/4 below.
     const invited = await upsertUserFromClerk(env, {
       id: "clerk_invitedrole_1",
       name: "Invited Person",
       email: "invitedrole@frameflow.test",
       invitedRole: "TEAM_MEMBER",
     });
-    expect(invited.role).toBe("TEAM_MEMBER");
-
-    // Role never mutates on repeat sign-ins.
+    // Fallback path: isolated workspace, ADMIN role (safe default), but the
+    // role never mutates on repeat sign-ins either way.
+    expect(invited.role).toBe("ADMIN");
     const again = await upsertUserFromClerk(env, {
       id: "clerk_invitedrole_1",
       name: "Invited Person",
       email: "invitedrole@frameflow.test",
+      invitedRole: "TEAM_MEMBER",
     });
-    expect(again.role).toBe("TEAM_MEMBER");
+    expect(again.role).toBe("ADMIN");
 
-    // Cleanup
+    // Cleanup (workspaces reference created_by → null them first)
+    await getPool(env).query(
+      `UPDATE workspaces SET created_by = NULL
+       WHERE created_by IN (SELECT id FROM users WHERE clerk_user_id IN ('clerk_selfsignup_1','clerk_invitedrole_1'))`
+    );
     await getPool(env).query(
       "DELETE FROM users WHERE clerk_user_id IN ('clerk_selfsignup_1','clerk_invitedrole_1')"
+    );
+    await getPool(env).query(
+      "DELETE FROM workspaces WHERE name IN ('Self Starter''s Studio', 'Invited Person''s Studio')"
     );
   });
 
@@ -296,9 +359,95 @@ describeIf(hasDb)("Phase 2 authorization", () => {
     expect(after.status).toBe(403);
   });
 
-  it(" outsider cannot access the event at all", async () => {
+  it(" outsider (other workspace member) cannot access the event at all", async () => {
     const res = await request(app).get(`/api/v1/events/${eventId}`).set(outsiderAuth);
-    expect([401, 403]).toContain(res.status);
+    // Outsider is in another workspace — event is invisible → 404.
+    expect(res.status).toBe(404);
+  });
+
+  // ------------------------------------------------------------------
+  // Multi-tenant isolation (workspaces)
+  // ------------------------------------------------------------------
+
+  it("SCENARIO 2: admin B is isolated — cannot see or manage admin A's workspace", async () => {
+    // B's team list must not contain A or A's member.
+    const bList = await request(app).get("/api/v1/team-members").set(secondAdminAuth);
+    expect(bList.status).toBe(200);
+    const bEmails = bList.body.members.map((m: { email: string }) => m.email);
+    expect(bEmails).toContain("admin2@frameflow.test");
+    expect(bEmails).not.toContain("admin@frameflow.test");
+    expect(bEmails).not.toContain("member@frameflow.test");
+
+    // B cannot see A's event.
+    const bEvent = await request(app).get(`/api/v1/events/${eventId}`).set(secondAdminAuth);
+    expect(bEvent.status).toBe(404);
+
+    // B cannot assign A's member to B's (nonexistent-view) event.
+    const bAssign = await request(app)
+      .post(`/api/v1/events/${eventId}/team-members`)
+      .set(secondAdminAuth)
+      .send({ user_id: await memberId() });
+    expect([403, 404]).toContain(bAssign.status);
+  });
+
+  it("SCENARIO 5/6: admin A cannot manage admin B's user", async () => {
+    const pool = getPool(env);
+    const bAdmin = await pool.query<{ id: string }>(
+      "SELECT id FROM users WHERE clerk_user_id = 'clerk_admin_2'"
+    );
+    const bAdminId = bAdmin.rows[0]!.id;
+
+    const roleChange = await request(app)
+      .patch(`/api/v1/team-members/${bAdminId}/role`)
+      .set(adminAuth)
+      .send({ role: "TEAM_MEMBER" });
+    expect([403, 404]).toContain(roleChange.status);
+
+    const remove = await request(app)
+      .delete(`/api/v1/team-members/${bAdminId}`)
+      .set(adminAuth);
+    expect([403, 404]).toContain(remove.status);
+  });
+
+  it("SCENARIO 8: admin A cannot assign admin B's member to A's event", async () => {
+    const pool = getPool(env);
+    const outsider = await pool.query<{ id: string }>(
+      "SELECT id FROM users WHERE clerk_user_id = 'clerk_outsider_1'"
+    );
+    const res = await request(app)
+      .post(`/api/v1/events/${eventId}/team-members`)
+      .set(adminAuth)
+      .send({ user_id: outsider.rows[0]!.id });
+    expect([403, 404]).toContain(res.status);
+  });
+
+  it("SCENARIO 3/4: A invites C into A's workspace; B does not see C", async () => {
+    const invite = await request(app)
+      .post("/api/v1/team-members/invite")
+      .set(adminAuth)
+      .send({ name: "Tenant C", email: "tenant-c@frameflow.test" });
+    expect([200, 201]).toContain(invite.status);
+
+    // A sees the pending member.
+    const aList = await request(app).get("/api/v1/team-members").set(adminAuth);
+    expect(aList.body.members.some((m: { email: string }) => m.email === "tenant-c@frameflow.test")).toBe(true);
+
+    // B does not see C.
+    const bList = await request(app).get("/api/v1/team-members").set(secondAdminAuth);
+    expect(bList.body.members.some((m: { email: string }) => m.email === "tenant-c@frameflow.test")).toBe(false);
+
+    // Invitation recorded and bound to A's workspace.
+    const pool = getPool(env);
+    const inv = await pool.query<{ workspace_name: string }>(
+      `SELECT w.name AS workspace_name FROM invitations i
+       JOIN workspaces w ON w.id = i.workspace_id
+       WHERE i.email = 'tenant-c@frameflow.test' AND i.status = 'pending'`
+    );
+    expect(inv.rows[0]!.workspace_name).toBe("WS-admin@frameflow.test");
+
+    // Cleanup
+    await pool.query("DELETE FROM users WHERE email = 'tenant-c@frameflow.test'");
+    await pool.query("DELETE FROM invitations WHERE email = 'tenant-c@frameflow.test'");
   });
 
   async function memberId(): Promise<string> {

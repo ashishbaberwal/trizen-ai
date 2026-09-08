@@ -6,19 +6,25 @@ import {
   addEventMember,
   checkDatabase,
   createEvent,
+  createInvitation,
   deleteEvent,
   getEventById,
+  getPendingInvitationByEmail,
   getUserByClerkId,
   getUserById,
+  getWorkspaceEvent,
   isEventMember,
   listEventMembers,
   listEventsForUser,
-  listUsers,
+  listPendingInvitationsForWorkspace,
+  listWorkspaceUsers,
+  markInvitationAccepted,
   removeEventMember,
   setUserRole,
   updateEvent,
   upsertUserFromClerk,
   type DbEvent,
+  type DbInvitation,
   type DbUser,
 } from "../lib/db.js";
 import { getClerkClientForEnv } from "../lib/clerk.js";
@@ -106,23 +112,22 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
   }) as unknown as import("express").RequestHandler);
 
   // ------------------------------------------------------------------
-  // Team members (ADMIN only)
+  // Team members (ADMIN only, workspace-scoped)
   // ------------------------------------------------------------------
 
-  router.get("/team-members", requireRole(env, "ADMIN"), (async (_req: Request, res: Response) => {
-    const users = await listUsers(env);
-    res.json({ members: users.map(serializeUser) });
+  router.get("/team-members", requireRole(env, "ADMIN"), (async (req: Request, res: Response) => {
+    const actor = await resolveAppUser(env, req);
+    const users = await listWorkspaceUsers(env, actor.workspace_id);
+    const invites = await listPendingInvitationsForWorkspace(env, actor.workspace_id);
+    res.json({ members: users.map(serializeUser), invites: invites.map(serializeInvitation) });
   }) as unknown as import("express").RequestHandler);
 
   /**
    * Invite a team member: creates a Clerk invitation (emails the invitee)
-   * and pre-creates the Postgres row with role TEAM_MEMBER keyed by a
-   * `pending:` placeholder clerk_user_id. When the invitee accepts and signs
-   * in, upsertUserFromClerk matches by their real clerk_user_id — so the
-   * pre-created row is NOT claimed (emails differ); a fresh row is created
-   * and the pending row is marked claimed by email→row update. Simpler and
-   * safer: we keep the pending row for the UI and link it to the real Clerk
-   * identity the first time that identity signs in with the same email.
+   * and records it in the invitations table bound to the INVITER'S workspace
+   * (derived from the authenticated user — never from the request body).
+   * The invitation stamps role:'TEAM_MEMBER' into the invitee's Clerk
+   * publicMetadata so they provision into this workspace as TEAM_MEMBER.
    */
   router.post("/team-members/invite", requireRole(env, "ADMIN"), (async (
     req: Request,
@@ -134,21 +139,32 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
       return;
     }
     const { name, email } = parsed.data;
+    const actor = await resolveAppUser(env, req);
+
+    // Already in this workspace? Nothing to do.
+    const workspaceUsers = await listWorkspaceUsers(env, actor.workspace_id);
+    const existingMember = workspaceUsers.find(
+      (u) => u.email.toLowerCase() === email.toLowerCase()
+    );
+    if (existingMember) {
+      res.status(200).json({ member: serializeUser(existingMember), invited: false });
+      return;
+    }
 
     // Send the Clerk invitation. Duplicate invitations (422) are tolerated —
-    // the row below is still ensured so the UI shows the invited member.
-    // The invitation stamps role:'TEAM_MEMBER' into the invitee's Clerk
-    // publicMetadata on acceptance, so invited members provision as
-    // TEAM_MEMBER (self-signups default to ADMIN — see upsertUserFromClerk).
+    // the local invitation record below is still ensured.
+    let clerkInvitationId: string | undefined;
     try {
-      await getClerkClientForEnv(env).invitations.createInvitation({
+      const invitation = await getClerkClientForEnv(env).invitations.createInvitation({
         emailAddress: email,
         notify: true,
         publicMetadata: {
-          invited_by: (req as AuthedRequest).auth?.userId ?? null,
+          invited_by: actor.id,
+          workspace_id: actor.workspace_id,
           role: "TEAM_MEMBER",
         },
       });
+      clerkInvitationId = invitation.id;
     } catch (err) {
       const status = (err as { status?: number }).status;
       if (status !== 422) {
@@ -158,27 +174,37 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
       }
     }
 
-    // Ensure the application row (idempotent on email).
-    const users = await listUsers(env);
-    const existing = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (existing) {
-      res.status(200).json({ member: serializeUser(existing), invited: true });
+    await createInvitation(env, {
+      email,
+      workspace_id: actor.workspace_id,
+      invited_by: actor.id,
+      clerk_invitation_id: clerkInvitationId,
+    });
+
+    // Pre-create the pending placeholder row so the team list shows the
+    // invited member before they accept. It is claimed on first sign-in.
+    const pendingRes = await listWorkspaceUsers(env, actor.workspace_id);
+    const existingPending = pendingRes.find(
+      (u) => u.email.toLowerCase() === email.toLowerCase() && u.clerk_user_id.startsWith("pending:")
+    );
+    if (existingPending) {
+      res.status(200).json({ member: serializeUser(existingPending), invited: true });
       return;
     }
     const { getPool } = await import("../lib/db.js");
     const result = await getPool(env).query<DbUser>(
-      `INSERT INTO users (clerk_user_id, name, email, role)
-       VALUES ($1, $2, $3, 'TEAM_MEMBER')
+      `INSERT INTO users (clerk_user_id, name, email, role, workspace_id)
+       VALUES ($1, $2, $3, 'TEAM_MEMBER', $4)
        RETURNING *`,
-      [`pending:${email.toLowerCase()}`, name, email]
+      [`pending:${email.toLowerCase()}`, name, email, actor.workspace_id]
     );
     res.status(201).json({ member: serializeUser(result.rows[0]!), invited: true });
   }) as unknown as import("express").RequestHandler);
 
   /**
    * Change a user's application role. Backend-only decision: the actor cannot
-   * change their own role, and the last remaining ADMIN can never be demoted
-   * (guarantees the system always has at least one admin).
+   * change their own role, the target must be in the same workspace, and the
+   * last remaining ADMIN of the workspace can never be demoted.
    */
   router.patch("/team-members/:id/role", requireRole(env, "ADMIN"), (async (
     req: Request,
@@ -189,18 +215,20 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
       res.status(400).json({ error: "Invalid input", details: parsed.error.flatten() });
       return;
     }
+    const actor = await resolveAppUser(env, req);
     const target = await getUserById(env, String(req.params.id));
-    if (!target) {
+    if (!target || target.workspace_id !== actor.workspace_id) {
       res.status(404).json({ error: "Team member not found" });
       return;
     }
-    const actor = await resolveAppUser(env, req);
     if (target.id === actor.id) {
       res.status(403).json({ error: "You cannot change your own role" });
       return;
     }
     if (target.role === "ADMIN" && parsed.data.role === "TEAM_MEMBER") {
-      const admins = (await listUsers(env)).filter((u) => u.role === "ADMIN");
+      const admins = (await listWorkspaceUsers(env, actor.workspace_id)).filter(
+        (u) => u.role === "ADMIN"
+      );
       if (admins.length <= 1) {
         res.status(409).json({ error: "Cannot demote the last admin" });
         return;
@@ -215,21 +243,20 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
   }) as unknown as import("express").RequestHandler);
 
   /**
-   * Remove a team member (revoke access). The pending row's clerk_user_id is
-   * a `pending:` placeholder, so deletion is safe. Real users keep their
-   * Clerk account (auth remains in Clerk) but lose the app row → 401 on
-   * next API call, and event memberships cascade.
+   * Remove a team member (revoke access). The target must belong to the
+   * actor's workspace. Real users keep their Clerk account (auth remains in
+   * Clerk) but lose the app row → 401 on next API call; memberships cascade.
    */
   router.delete("/team-members/:id", requireRole(env, "ADMIN"), (async (
     req: Request,
     res: Response
   ) => {
+    const actor = await resolveAppUser(env, req);
     const target = await getUserById(env, String(req.params.id));
-    if (!target) {
+    if (!target || target.workspace_id !== actor.workspace_id) {
       res.status(404).json({ error: "Team member not found" });
       return;
     }
-    const actor = await resolveAppUser(env, req);
     if (target.id === actor.id) {
       res.status(403).json({ error: "You cannot remove your own account" });
       return;
@@ -244,7 +271,7 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
   }) as unknown as import("express").RequestHandler);
 
   // ------------------------------------------------------------------
-  // Events
+  // Events (workspace-scoped)
   // ------------------------------------------------------------------
 
   router.get("/events", (async (req: Request, res: Response) => {
@@ -260,13 +287,15 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
       return;
     }
     const actor = await resolveAppUser(env, req);
-    const event = await createEvent(env, actor.id, parsed.data);
+    // workspace_id derives from the authenticated admin — never the client.
+    const event = await createEvent(env, actor.workspace_id, actor.id, parsed.data);
     res.status(201).json({ event: serializeEvent(event) });
   }) as unknown as import("express").RequestHandler);
 
   router.get("/events/:id", (async (req: Request, res: Response) => {
     const user = await resolveAppUser(env, req);
-    const event = await getEventById(env, String(req.params.id));
+    // Tenancy gate: event must belong to the caller's workspace.
+    const event = await getWorkspaceEvent(env, String(req.params.id), user.workspace_id);
     if (!event) {
       res.status(404).json({ error: "Event not found" });
       return;
@@ -285,7 +314,8 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
       res.status(400).json({ error: "Invalid input", details: parsed.error.flatten() });
       return;
     }
-    const event = await getEventById(env, String(req.params.id));
+    const actor = await resolveAppUser(env, req);
+    const event = await getWorkspaceEvent(env, String(req.params.id), actor.workspace_id);
     if (!event) {
       res.status(404).json({ error: "Event not found" });
       return;
@@ -295,7 +325,8 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
   }) as unknown as import("express").RequestHandler);
 
   router.delete("/events/:id", requireRole(env, "ADMIN"), (async (req: Request, res: Response) => {
-    const event = await getEventById(env, String(req.params.id));
+    const actor = await resolveAppUser(env, req);
+    const event = await getWorkspaceEvent(env, String(req.params.id), actor.workspace_id);
     if (!event) {
       res.status(404).json({ error: "Event not found" });
       return;
@@ -305,12 +336,12 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
   }) as unknown as import("express").RequestHandler);
 
   // ------------------------------------------------------------------
-  // Event team membership
+  // Event team membership (workspace-scoped)
   // ------------------------------------------------------------------
 
   router.get("/events/:id/team-members", (async (req: Request, res: Response) => {
     const user = await resolveAppUser(env, req);
-    const event = await getEventById(env, String(req.params.id));
+    const event = await getWorkspaceEvent(env, String(req.params.id), user.workspace_id);
     if (!event) {
       res.status(404).json({ error: "Event not found" });
       return;
@@ -332,13 +363,15 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
       res.status(400).json({ error: "Invalid input", details: parsed.error.flatten() });
       return;
     }
-    const event = await getEventById(env, String(req.params.id));
+    const actor = await resolveAppUser(env, req);
+    const event = await getWorkspaceEvent(env, String(req.params.id), actor.workspace_id);
     if (!event) {
       res.status(404).json({ error: "Event not found" });
       return;
     }
     const target = await getUserById(env, parsed.data.user_id);
-    if (!target) {
+    // Both the event AND the assignee must belong to the actor's workspace.
+    if (!target || target.workspace_id !== actor.workspace_id) {
       res.status(404).json({ error: "Team member not found" });
       return;
     }
@@ -346,7 +379,6 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
       res.status(409).json({ error: "This member hasn't accepted their invite yet" });
       return;
     }
-    const actor = await resolveAppUser(env, req);
     const membership = await addEventMember(env, event.id, target.id, actor.id);
     res.status(201).json({ membership: serializeMember({ ...membership, user: target }) });
   }) as unknown as import("express").RequestHandler);
@@ -355,12 +387,18 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
     req: Request,
     res: Response
   ) => {
-    const event = await getEventById(env, String(req.params.id));
+    const actor = await resolveAppUser(env, req);
+    const event = await getWorkspaceEvent(env, String(req.params.id), actor.workspace_id);
     if (!event) {
       res.status(404).json({ error: "Event not found" });
       return;
     }
-    const removed = await removeEventMember(env, event.id, String(req.params.userId));
+    const target = await getUserById(env, String(req.params.userId));
+    if (!target || target.workspace_id !== actor.workspace_id) {
+      res.status(404).json({ error: "Membership not found" });
+      return;
+    }
+    const removed = await removeEventMember(env, event.id, target.id);
     if (!removed) {
       res.status(404).json({ error: "Membership not found" });
       return;
@@ -407,6 +445,15 @@ export function serializeEvent(e: DbEvent) {
     date: e.event_date,
     status: e.status,
     createdAt: new Date(e.created_at).toISOString(),
+  };
+}
+
+export function serializeInvitation(i: DbInvitation) {
+  return {
+    id: i.id,
+    email: i.email,
+    status: i.status,
+    created_at: new Date(i.created_at).toISOString(),
   };
 }
 

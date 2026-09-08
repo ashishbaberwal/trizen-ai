@@ -9,12 +9,22 @@ export type DbUser = {
   name: string;
   email: string;
   role: "ADMIN" | "TEAM_MEMBER";
+  workspace_id: string;
+  created_at: Date;
+  updated_at: Date;
+};
+
+export type DbWorkspace = {
+  id: string;
+  name: string;
+  created_by: string | null;
   created_at: Date;
   updated_at: Date;
 };
 
 export type DbEvent = {
   id: string;
+  workspace_id: string;
   name: string;
   description: string;
   location: string;
@@ -98,23 +108,16 @@ export async function checkDatabase(env: Env): Promise<boolean> {
 }
 
 /**
- * Map a verified Clerk user to an application row. Creates the row on first
- * sighting (JIT provisioning) and keeps name/email in sync with Clerk.
- * The Clerk user ID is the stable identity — repeated sign-ins never create
- * duplicate rows, and the role column is never overwritten here.
+ * Provision a verified Clerk identity into the application.
  *
- * Role policy (set at creation, then immutable through this path):
- * - Self-registered users (no `role` set in Clerk publicMetadata by an
- *   invitation) become ADMIN — per product decision, every account that
- *   signs up on its own is a studio admin.
- * - Invited members carry role:'TEAM_MEMBER' in the invitation's
- *   publicMetadata, so they provision as TEAM_MEMBER.
- *
- * Pending invites: an admin's invite pre-creates a row keyed by the
- * `pending:<email>` placeholder. When the real Clerk identity signs in, that
- * pending row is adopted (clerk_user_id replaced with the real ID) so the
- * team list keeps a single entry per person and any pre-assigned event
- * memberships survive the claim.
+ * Multi-tenant rules:
+ * - Self-registered users (no invitation metadata): get their OWN new
+ *   workspace and role ADMIN. The workspace initially contains only them.
+ * - Invited users (invitation stamped role:'TEAM_MEMBER' into Clerk
+ *   publicMetadata): join the INVITER's workspace as TEAM_MEMBER — never
+ *   their own workspace.
+ * - Existing users: nothing changes except a name/email refresh; role and
+ *   workspace are never overwritten here.
  */
 export async function upsertUserFromClerk(
   env: Env,
@@ -122,26 +125,81 @@ export async function upsertUserFromClerk(
 ): Promise<DbUser> {
   const pool = getPool(env);
 
-  // 1. Already linked? Keep name/email fresh, never touch the role.
-  const linked = await pool.query<DbUser>(
-    `INSERT INTO users (clerk_user_id, name, email, role)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (clerk_user_id)
-     DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, updated_at = now()
-     RETURNING *`,
-    [clerkUser.id, clerkUser.name, clerkUser.email, clerkUser.invitedRole ?? "ADMIN"]
+  const existing = await pool.query<DbUser>(
+    "SELECT * FROM users WHERE clerk_user_id = $1",
+    [clerkUser.id]
   );
-  const user = linked.rows[0]!;
+  let user = existing.rows[0];
 
-  // 2. Adopt a pending invite row for the same email (if one exists and it
-  //    isn't the row we just upserted). Move its event memberships to the
-  //    claimed row, then delete the placeholder.
-  const pending = await pool.query<DbUser>(
-    "SELECT * FROM users WHERE email = $1 AND clerk_user_id = $2",
-    [clerkUser.email, `pending:${clerkUser.email.toLowerCase()}`]
+  if (!user) {
+    // New identity — decide tenancy path.
+    const invited = clerkUser.invitedRole === "TEAM_MEMBER";
+    if (invited) {
+      // Flow B: attach to the inviter's workspace via the pending invitation.
+      const pending = await getPendingInvitationByEmail(env, clerkUser.email);
+      if (pending) {
+        const ws = await pool.query<{ id: string }>(
+          "SELECT id FROM workspaces WHERE id = $1",
+          [pending.workspace_id]
+        );
+        const workspaceId = ws.rows[0]?.id;
+        if (!workspaceId) throw new Error("Invitation workspace missing");
+        const created = await pool.query<DbUser>(
+          `INSERT INTO users (clerk_user_id, name, email, role, workspace_id)
+           VALUES ($1, $2, $3, 'TEAM_MEMBER', $4)
+           RETURNING *`,
+          [clerkUser.id, clerkUser.name, clerkUser.email, workspaceId]
+        );
+        user = created.rows[0]!;
+        await markInvitationAccepted(env, pending.id);
+      }
+      // If no pending invitation row exists (invited but row lost), fall
+      // through to the self-signup path — better an isolated workspace than
+      // an invented membership.
+    }
+
+    if (!user) {
+      // Flow A: independent registration → own workspace + ADMIN.
+      const workspace = await pool.query<DbWorkspace>(
+        `INSERT INTO workspaces (name, created_by)
+         VALUES ($1, NULL)
+         RETURNING *`,
+        [
+          (clerkUser.name || clerkUser.email.split("@")[0] || "My") + "'s Studio",
+        ]
+      );
+      const created = await pool.query<DbUser>(
+        `INSERT INTO users (clerk_user_id, name, email, role, workspace_id)
+         VALUES ($1, $2, $3, 'ADMIN', $4)
+         RETURNING *`,
+        [clerkUser.id, clerkUser.name, clerkUser.email, workspace.rows[0]!.id]
+      );
+      user = created.rows[0]!;
+      // Workspace owner is now known — link it.
+      await pool.query("UPDATE workspaces SET created_by = $1 WHERE id = $2", [
+        user.id,
+        workspace.rows[0]!.id,
+      ]);
+    }
+  } else {
+    // Existing user — refresh profile fields only.
+    const refreshed = await pool.query<DbUser>(
+      `UPDATE users SET name = $2, email = $3, updated_at = now()
+       WHERE id = $1 RETURNING *`,
+      [user.id, clerkUser.name, clerkUser.email]
+    );
+    user = refreshed.rows[0]!;
+  }
+
+  // Claim a pending placeholder row for the same email, if any (invited
+  // member whose pre-created row exists). Move its event memberships over,
+  // then delete the placeholder.
+  const pendingRowRes = await pool.query<DbUser>(
+    "SELECT * FROM users WHERE email = $1 AND clerk_user_id = $2 AND id <> $3",
+    [clerkUser.email, `pending:${clerkUser.email.toLowerCase()}`, user.id]
   );
-  const pendingRow = pending.rows[0];
-  if (pendingRow && pendingRow.id !== user.id) {
+  const pendingRow = pendingRowRes.rows[0];
+  if (pendingRow) {
     await pool.query(
       `INSERT INTO event_team_members (event_id, user_id, added_by, added_at)
        SELECT event_id, $2, added_by, added_at FROM event_team_members WHERE user_id = $1
@@ -153,6 +211,63 @@ export async function upsertUserFromClerk(
   }
 
   return user;
+}
+
+// ---------------------------------------------------------------------------
+// Invitations
+// ---------------------------------------------------------------------------
+
+export type DbInvitation = {
+  id: string;
+  email: string;
+  workspace_id: string;
+  invited_by: string;
+  status: "pending" | "accepted" | "revoked";
+  clerk_invitation_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+};
+
+export async function createInvitation(
+  env: Env,
+  input: { email: string; workspace_id: string; invited_by: string; clerk_invitation_id?: string }
+): Promise<DbInvitation> {
+  const result = await getPool(env).query<DbInvitation>(
+    `INSERT INTO invitations (email, workspace_id, invited_by, clerk_invitation_id)
+     VALUES ($1, $2, $3, $4)
+     RETURNING *`,
+    [input.email.toLowerCase(), input.workspace_id, input.invited_by, input.clerk_invitation_id ?? null]
+  );
+  return result.rows[0]!;
+}
+
+export async function getPendingInvitationByEmail(
+  env: Env,
+  email: string
+): Promise<DbInvitation | null> {
+  const result = await getPool(env).query<DbInvitation>(
+    "SELECT * FROM invitations WHERE email = $1 AND status = 'pending' ORDER BY created_at DESC",
+    [email.toLowerCase()]
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function markInvitationAccepted(env: Env, id: string): Promise<void> {
+  await getPool(env).query(
+    "UPDATE invitations SET status = 'accepted', updated_at = now() WHERE id = $1",
+    [id]
+  );
+}
+
+export async function listPendingInvitationsForWorkspace(
+  env: Env,
+  workspaceId: string
+): Promise<DbInvitation[]> {
+  const result = await getPool(env).query<DbInvitation>(
+    "SELECT * FROM invitations WHERE workspace_id = $1 AND status = 'pending' ORDER BY created_at DESC",
+    [workspaceId]
+  );
+  return result.rows;
 }
 
 /** Fetch the application user row for a verified Clerk user ID. */
@@ -169,10 +284,11 @@ export async function getUserById(env: Env, id: string): Promise<DbUser | null> 
   return result.rows[0] ?? null;
 }
 
-/** All application users, newest first. */
-export async function listUsers(env: Env): Promise<DbUser[]> {
+/** Workspace members only — never a global user list. */
+export async function listWorkspaceUsers(env: Env, workspaceId: string): Promise<DbUser[]> {
   const result = await getPool(env).query<DbUser>(
-    "SELECT * FROM users ORDER BY created_at DESC"
+    "SELECT * FROM users WHERE workspace_id = $1 ORDER BY created_at DESC",
+    [workspaceId]
   );
   return result.rows;
 }
@@ -204,14 +320,16 @@ export interface CreateEventInput {
 
 export async function createEvent(
   env: Env,
+  workspaceId: string,
   createdByUserId: string,
   input: CreateEventInput
 ): Promise<DbEvent> {
   const result = await getPool(env).query<DbEvent>(
-    `INSERT INTO events (name, description, location, event_date, status, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO events (workspace_id, name, description, location, event_date, status, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
     [
+      workspaceId,
       input.name,
       input.description ?? "",
       input.location ?? "",
@@ -223,26 +341,44 @@ export async function createEvent(
   return result.rows[0]!;
 }
 
-export async function listEvents(env: Env): Promise<DbEvent[]> {
+/** All events in a workspace, newest first. */
+export async function listWorkspaceEvents(env: Env, workspaceId: string): Promise<DbEvent[]> {
   const result = await getPool(env).query<DbEvent>(
-    "SELECT * FROM events ORDER BY created_at DESC"
+    "SELECT * FROM events WHERE workspace_id = $1 ORDER BY created_at DESC",
+    [workspaceId]
   );
   return result.rows;
 }
 
-/** Events a user can access: all events for admins, assigned events for members. */
+/** Events a user can access: workspace events for admins, assigned for members. */
 export async function listEventsForUser(env: Env, user: DbUser): Promise<DbEvent[]> {
   if (user.role === "ADMIN") {
-    return listEvents(env);
+    return listWorkspaceEvents(env, user.workspace_id);
   }
   const result = await getPool(env).query<DbEvent>(
     `SELECT e.* FROM events e
      JOIN event_team_members etm ON etm.event_id = e.id
-     WHERE etm.user_id = $1
+     WHERE etm.user_id = $1 AND e.workspace_id = $2
      ORDER BY e.created_at DESC`,
-    [user.id]
+    [user.id, user.workspace_id]
   );
   return result.rows;
+}
+
+/**
+ * Workspace-aware fetch: returns the event only if it belongs to the given
+ * workspace. This is the tenancy gate for every event access.
+ */
+export async function getWorkspaceEvent(
+  env: Env,
+  id: string,
+  workspaceId: string
+): Promise<DbEvent | null> {
+  const result = await getPool(env).query<DbEvent>(
+    "SELECT * FROM events WHERE id = $1 AND workspace_id = $2",
+    [id, workspaceId]
+  );
+  return result.rows[0] ?? null;
 }
 
 export async function getEventById(env: Env, id: string): Promise<DbEvent | null> {
@@ -354,11 +490,12 @@ export async function listEventMembers(
     name: string;
     email: string;
     role: "ADMIN" | "TEAM_MEMBER";
+    workspace_id: string;
     user_created_at: Date;
     user_updated_at: Date;
   }>(
     `SELECT etm.event_id, etm.user_id, etm.added_by, etm.added_at,
-            u.clerk_user_id, u.name, u.email, u.role,
+            u.clerk_user_id, u.name, u.email, u.role, u.workspace_id,
             u.created_at AS "user_created_at", u.updated_at AS "user_updated_at"
      FROM event_team_members etm
      JOIN users u ON u.id = etm.user_id
@@ -377,6 +514,7 @@ export async function listEventMembers(
       name: row.name,
       email: row.email,
       role: row.role,
+      workspace_id: row.workspace_id,
       created_at: row.user_created_at,
       updated_at: row.user_updated_at,
     },
