@@ -5,7 +5,7 @@ import { useAuth } from "@clerk/nextjs";
 import { Loader2, Mail, UserPlus, MoreHorizontal, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { api, type TeamMemberApi } from "@/lib/api/client";
+import { api, ApiError, type TeamMemberApi } from "@/lib/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -80,15 +80,27 @@ export function TeamManagement() {
     try {
       const token = await getToken();
       const data = await api.inviteMember(token, { name, email });
-      toast.success("Invitation sent", {
-        description: `${data.member.name} will receive a Clerk invite email.`,
-      });
+      if (data.invited === false) {
+        toast.info(`${data.member.name} is already on your team.`);
+      } else {
+        toast.success("Invitation sent", {
+          description: `${data.member.name} will receive a Clerk invite email.`,
+        });
+      }
       setName("");
       setEmail("");
       setInviteOpen(false);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send invitation");
+      const message =
+        err instanceof ApiError
+          ? err.status === 502
+            ? "Unable to send invitation. Please check the email address and try again."
+            : err.status === 403
+              ? "You don't have permission to perform this action."
+              : err.message
+          : "Unable to connect to the server. Please try again.";
+      setError(message);
     } finally {
       setInviting(false);
     }

@@ -60,8 +60,9 @@ export const api = {
   health: () => fetch(`${API_URL}/health`).then((r) => r.json() as Promise<{ status: string }>),
   me: (token: string | null) => apiFetch<{ id: string; email: string; name: string; role: string }>("/me", { token }),
 
-  // ---- Team management (ADMIN) ----
-  listMembers: (token: string | null) => apiFetch<{ members: TeamMemberApi[] }>("/team-members", { token }),
+  // ---- Team management (ADMIN, workspace-scoped) ----
+  listMembers: (token: string | null) =>
+    apiFetch<{ members: TeamMemberApi[]; invites: InvitationApi[] }>("/team-members", { token }),
   inviteMember: (
     token: string | null,
     input: { name: string; email: string }
@@ -122,4 +123,11 @@ export interface EventApi {
   date: string;
   status: "draft" | "active" | "completed";
   createdAt: string;
+}
+
+export interface InvitationApi {
+  id: string;
+  email: string;
+  status: "pending" | "accepted" | "revoked";
+  created_at: string;
 }
