@@ -8,6 +8,8 @@ export interface AuthedRequest extends Request {
     userId: string;
     name: string;
     email: string;
+    /** Role stamped by a Clerk invitation's publicMetadata, if invited. */
+    invitedRole?: "ADMIN" | "TEAM_MEMBER";
   };
 }
 
@@ -49,18 +51,25 @@ export function requireAuth(env: Env) {
         return;
       }
 
-      // Pull a fresh, verified profile for name/email.
+      // Pull a fresh, verified profile for name/email and invitation metadata.
       let name = "";
       let email = "";
+      let invitedRole: "ADMIN" | "TEAM_MEMBER" | undefined;
       try {
         const user = await getClerkClient(env).users.getUser(sub);
         name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
         email = user.primaryEmailAddress?.emailAddress ?? "";
+        // Invitations stamp role into publicMetadata; self-signups don't
+        // have it (→ default ADMIN policy applies in upsertUserFromClerk).
+        const metaRole = user.publicMetadata?.role;
+        if (metaRole === "ADMIN" || metaRole === "TEAM_MEMBER") {
+          invitedRole = metaRole;
+        }
       } catch {
         // Verification already proved identity; profile fetch is best-effort.
       }
 
-      req.auth = { userId: sub, name, email };
+      req.auth = { userId: sub, name, email, invitedRole };
       next();
     } catch {
       // Invalid/expired token — same generic response as missing auth.

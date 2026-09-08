@@ -159,12 +159,14 @@ describeIf(hasDb)("Phase 2 authorization", () => {
     expect(invite.body.member.pending).toBe(true);
 
     // The invitee signs in — JIT upsert must adopt the pending row, not
-    // create a second row for the same email.
+    // create a second row for the same email. The invite stamped
+    // role:'TEAM_MEMBER' into publicMetadata, so the invited role applies.
     const { upsertUserFromClerk } = await import("../src/lib/db.js");
     const claimed = await upsertUserFromClerk(env, {
       id: "clerk_joining_1",
       name: "Joining Member",
       email: "joining@frameflow.test",
+      invitedRole: "TEAM_MEMBER",
     });
 
     // Exactly one row for that email, and it carries the real Clerk ID.
@@ -202,6 +204,40 @@ describeIf(hasDb)("Phase 2 authorization", () => {
     // Cleanup
     await getPool(env).query(
       "DELETE FROM users WHERE clerk_user_id = 'clerk_joining_1'"
+    );
+  });
+
+  it("self-registered users provision as ADMIN; invited users as TEAM_MEMBER", async () => {
+    const { upsertUserFromClerk } = await import("../src/lib/db.js");
+
+    // Self-signup (no invitedRole) → ADMIN per product policy.
+    const selfSignup = await upsertUserFromClerk(env, {
+      id: "clerk_selfsignup_1",
+      name: "Self Starter",
+      email: "selfsignup@frameflow.test",
+    });
+    expect(selfSignup.role).toBe("ADMIN");
+
+    // Invited (invitedRole stamped from Clerk publicMetadata) → TEAM_MEMBER.
+    const invited = await upsertUserFromClerk(env, {
+      id: "clerk_invitedrole_1",
+      name: "Invited Person",
+      email: "invitedrole@frameflow.test",
+      invitedRole: "TEAM_MEMBER",
+    });
+    expect(invited.role).toBe("TEAM_MEMBER");
+
+    // Role never mutates on repeat sign-ins.
+    const again = await upsertUserFromClerk(env, {
+      id: "clerk_invitedrole_1",
+      name: "Invited Person",
+      email: "invitedrole@frameflow.test",
+    });
+    expect(again.role).toBe("TEAM_MEMBER");
+
+    // Cleanup
+    await getPool(env).query(
+      "DELETE FROM users WHERE clerk_user_id IN ('clerk_selfsignup_1','clerk_invitedrole_1')"
     );
   });
 

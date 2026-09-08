@@ -57,8 +57,14 @@ export async function resolveAppUser(env: Env, req: Request): Promise<DbUser> {
   if (!auth) throw new HttpError(401, "Unauthorized");
   const user = await getUserByClerkId(env, auth.userId);
   if (!user) {
-    // Verified Clerk identity with no app row yet — provision as TEAM_MEMBER.
-    return upsertUserFromClerk(env, { id: auth.userId, name: auth.name, email: auth.email });
+    // Verified Clerk identity with no app row yet — provision per role policy
+    // (invited → their invitation role; self-signup → ADMIN).
+    return upsertUserFromClerk(env, {
+      id: auth.userId,
+      name: auth.name,
+      email: auth.email,
+      invitedRole: auth.invitedRole,
+    });
   }
   return user;
 }
@@ -89,6 +95,7 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
       id: auth.userId,
       name: auth.name,
       email: auth.email,
+      invitedRole: auth.invitedRole,
     });
     res.json({
       id: user.clerk_user_id,
@@ -130,11 +137,17 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
 
     // Send the Clerk invitation. Duplicate invitations (422) are tolerated —
     // the row below is still ensured so the UI shows the invited member.
+    // The invitation stamps role:'TEAM_MEMBER' into the invitee's Clerk
+    // publicMetadata on acceptance, so invited members provision as
+    // TEAM_MEMBER (self-signups default to ADMIN — see upsertUserFromClerk).
     try {
       await getClerkClientForEnv(env).invitations.createInvitation({
         emailAddress: email,
         notify: true,
-        publicMetadata: { invited_by: (req as AuthedRequest).auth?.userId ?? null },
+        publicMetadata: {
+          invited_by: (req as AuthedRequest).auth?.userId ?? null,
+          role: "TEAM_MEMBER",
+        },
       });
     } catch (err) {
       const status = (err as { status?: number }).status;

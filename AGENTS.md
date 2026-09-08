@@ -198,18 +198,15 @@ development. If invites don't arrive, check Clerk Dashboard → your app →
 is delayed; in dev you can copy the invitation link and open it directly).
 
 Setup steps:
-1. **Demo Admin:** create a user in Clerk Dashboard (or sign up through the
-   app), sign in once (JIT-creates the Postgres row as TEAM_MEMBER), then
-   promote — the only privileged step:
-   ```sql
-   UPDATE users SET role = 'ADMIN' WHERE email = '<admin-email>';
-   ```
-   (Or invite via Team Management UI and promote there — role changes are
-   backend-protected.)
+1. **Demo Admin:** sign up through the app (`/register`) and sign in once —
+   self-registered accounts provision as **ADMIN** automatically (product
+   policy: role defaults to ADMIN for self-signups; invitations stamp
+   `role: 'TEAM_MEMBER'` into Clerk publicMetadata so invitees provision as
+   TEAM_MEMBER). No manual SQL is needed anymore.
 2. **Demo Team Member:** from the Admin's Team Management page, click
    *Invite member*, enter name + email. The invitee accepts the Clerk email
-   invite, signs in, and their verified Clerk identity JIT-creates/links to
-   their Postgres row with role TEAM_MEMBER.
+   invite, signs in, and their verified Clerk identity claims the pending
+   Postgres row with role TEAM_MEMBER.
 3. **Assign to an event:** Admin opens an event → Team tab → *Assign member*.
 4. Verify: the member sees only assigned events; requests to unassigned
    event IDs return 403.

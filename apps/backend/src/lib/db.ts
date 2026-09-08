@@ -103,6 +103,13 @@ export async function checkDatabase(env: Env): Promise<boolean> {
  * The Clerk user ID is the stable identity — repeated sign-ins never create
  * duplicate rows, and the role column is never overwritten here.
  *
+ * Role policy (set at creation, then immutable through this path):
+ * - Self-registered users (no `role` set in Clerk publicMetadata by an
+ *   invitation) become ADMIN — per product decision, every account that
+ *   signs up on its own is a studio admin.
+ * - Invited members carry role:'TEAM_MEMBER' in the invitation's
+ *   publicMetadata, so they provision as TEAM_MEMBER.
+ *
  * Pending invites: an admin's invite pre-creates a row keyed by the
  * `pending:<email>` placeholder. When the real Clerk identity signs in, that
  * pending row is adopted (clerk_user_id replaced with the real ID) so the
@@ -111,18 +118,18 @@ export async function checkDatabase(env: Env): Promise<boolean> {
  */
 export async function upsertUserFromClerk(
   env: Env,
-  clerkUser: { id: string; name: string; email: string }
+  clerkUser: { id: string; name: string; email: string; invitedRole?: "ADMIN" | "TEAM_MEMBER" }
 ): Promise<DbUser> {
   const pool = getPool(env);
 
   // 1. Already linked? Keep name/email fresh, never touch the role.
   const linked = await pool.query<DbUser>(
     `INSERT INTO users (clerk_user_id, name, email, role)
-     VALUES ($1, $2, $3, 'TEAM_MEMBER')
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (clerk_user_id)
      DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, updated_at = now()
      RETURNING *`,
-    [clerkUser.id, clerkUser.name, clerkUser.email]
+    [clerkUser.id, clerkUser.name, clerkUser.email, clerkUser.invitedRole ?? "ADMIN"]
   );
   const user = linked.rows[0]!;
 
