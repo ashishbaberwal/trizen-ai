@@ -186,8 +186,39 @@ Run before finishing: `bun run lint && bun run check-types && bun run build`,
 plus `bun run test` in `apps/backend` when backend code changed. Report
 failures honestly — never claim green when a check failed.
 
+## Demo Account Setup (same real auth flow — no shortcuts)
+
+Demo accounts use the standard Clerk → Postgres flow. No hardcoded emails, no
+bypassed authorization, no fake endpoints.
+
+**One-time Clerk Dashboard action (required for invitations):** the Clerk
+backend SDK sends invitation emails through Clerk's default email provider in
+development. If invites don't arrive, check Clerk Dashboard → your app →
+**Users → Invitations** (the invitation exists there even if email delivery
+is delayed; in dev you can copy the invitation link and open it directly).
+
+Setup steps:
+1. **Demo Admin:** create a user in Clerk Dashboard (or sign up through the
+   app), sign in once (JIT-creates the Postgres row as TEAM_MEMBER), then
+   promote — the only privileged step:
+   ```sql
+   UPDATE users SET role = 'ADMIN' WHERE email = '<admin-email>';
+   ```
+   (Or invite via Team Management UI and promote there — role changes are
+   backend-protected.)
+2. **Demo Team Member:** from the Admin's Team Management page, click
+   *Invite member*, enter name + email. The invitee accepts the Clerk email
+   invite, signs in, and their verified Clerk identity JIT-creates/links to
+   their Postgres row with role TEAM_MEMBER.
+3. **Assign to an event:** Admin opens an event → Team tab → *Assign member*.
+4. Verify: the member sees only assigned events; requests to unassigned
+   event IDs return 403.
+
+Identity mapping: `users.clerk_user_id` is the stable key. Pending invites
+use a `pending:<email>` placeholder that never collides with a real Clerk ID.
+
 ## What NOT To Build Yet
 
-Events CRUD, team management, photo upload, selection, gallery publishing,
-PIN generation, downloads, thumbnails, pagination — all come in later phases.
-This phase is the foundation. Do not over-engineer ahead of the plan.
+Photo upload to Appwrite, photo selection, gallery publishing, PIN
+generation, downloads, thumbnails, pagination — all come in later phases.
+Do not over-engineer ahead of the plan.
