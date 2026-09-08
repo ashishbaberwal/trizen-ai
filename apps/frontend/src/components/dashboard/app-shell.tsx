@@ -58,7 +58,6 @@ export function AppShell({
           crumbs={crumbs}
           actions={actions}
           onOpenNav={() => setNavOpen(true)}
-          user={user}
         />
         <main
           className={cn(

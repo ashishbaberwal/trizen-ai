@@ -4,19 +4,9 @@ import * as React from "react";
 import { Bell, Menu, Search } from "lucide-react";
 import Link from "next/link";
 
-import { currentUser } from "@/lib/mock-data";
 import type { User } from "@/types";
-import { SignOutButton, UserButton } from "@clerk/nextjs";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { UserButton } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Popover,
@@ -39,7 +29,7 @@ const notifications = [
   { id: 3, title: "New team member", detail: "Inês Carvalho joined Wedding Team", time: "1d ago" },
 ];
 
-export function TopHeader({ crumbs, title, onOpenNav, actions, user = currentUser }: TopHeaderProps) {
+export function TopHeader({ crumbs, title, onOpenNav, actions }: TopHeaderProps) {
   return (
     <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:px-6">
       <Button
@@ -111,41 +101,7 @@ export function TopHeader({ crumbs, title, onOpenNav, actions, user = currentUse
           </PopoverContent>
         </Popover>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 cursor-pointer"
-              aria-label="Open profile menu"
-            >
-              <Avatar>
-                <AvatarFallback>
-                  {user.name.split(" ").map((n) => n[0]).join("")}
-                </AvatarFallback>
-              </Avatar>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>
-              <p className="text-sm font-medium text-foreground">{user.name}</p>
-              <p className="truncate text-xs font-normal">{user.email}</p>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link href="/dashboard/profile">Profile</Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/dashboard/settings">Settings</Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <SignOutButton redirectUrl="/login">
-                <button type="button" className="w-full text-left cursor-pointer">
-                  Log out
-                </button>
-              </SignOutButton>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* Single profile control: Clerk UserButton (account, sessions, sign-out). */}
         <UserButton />
       </div>
     </header>
