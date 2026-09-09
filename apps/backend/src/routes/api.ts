@@ -8,13 +8,17 @@ import {
   createEvent,
   createInvitation,
   deleteEvent,
+  deletePhoto,
   getEventById,
   getPendingInvitationByEmail,
+  getPhotoById,
   getUserByClerkId,
   getUserById,
   getWorkspaceEvent,
+  insertPhoto,
   isEventMember,
   listEventMembers,
+  listEventPhotos,
   listEventsForUser,
   listPendingInvitationsForWorkspace,
   listWorkspaceUsers,
@@ -25,12 +29,20 @@ import {
   upsertUserFromClerk,
   type DbEvent,
   type DbInvitation,
+  type DbPhoto,
   type DbUser,
 } from "../lib/db.js";
 import { getClerkClientForEnv } from "../lib/clerk.js";
 import type { AuthedRequest } from "../middleware/auth.js";
 import { requireRole } from "../middleware/auth.js";
 import { HttpError } from "../middleware/error.js";
+import { multerErrorHandler, photoUpload } from "../middleware/upload.js";
+import {
+  ALLOWED_MIME_TYPES,
+  deletePhotoQuietly,
+  photoUrl,
+  uploadPhoto,
+} from "../lib/storage.js";
 
 export interface CreateRouterOptions {
   env: Env;
@@ -336,6 +348,116 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
   }) as unknown as import("express").RequestHandler);
 
   // ------------------------------------------------------------------
+  // Photos (binaries in Appwrite, metadata in Postgres, workspace-scoped)
+  // ------------------------------------------------------------------
+
+  /**
+   * Shared gate for photo operations: event must be in the caller's
+   * workspace, and team members must be assigned to the event. Admins pass
+   * by workspace membership alone.
+   */
+  async function authorizeEventAccess(req: Request, res: Response) {
+    const user = await resolveAppUser(env, req);
+    const event = await getWorkspaceEvent(env, String(req.params.eventId ?? req.params.id), user.workspace_id);
+    if (!event) {
+      res.status(404).json({ error: "Event not found" });
+      return null;
+    }
+    if (user.role !== "ADMIN" && !(await isEventMember(env, event.id, user.id))) {
+      res.status(403).json({ error: "Forbidden" });
+      return null;
+    }
+    return { user, event };
+  }
+
+  router.post(
+    "/events/:eventId/photos",
+    photoUpload,
+    multerErrorHandler,
+    (async (req: Request, res: Response) => {
+      const ctx = await authorizeEventAccess(req, res);
+      if (!ctx) return;
+      const { user, event } = ctx;
+
+      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      if (files.length === 0) {
+        res.status(400).json({ error: "No photos provided" });
+        return;
+      }
+
+      const uploaded: unknown[] = [];
+      for (const file of files) {
+        // Defense in depth: multer's fileFilter already checked this, but
+        // never trust a single layer for content-type.
+        if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+          res.status(400).json({ error: `Unsupported file type: ${file.mimetype}. Use JPEG, PNG or WebP.` });
+          return;
+        }
+        try {
+          // 1. Binary → Appwrite (safe UUID storage key, filename is metadata).
+          const stored = await uploadPhoto(env, file.buffer, file.mimetype, file.originalname);
+          try {
+            // 2. Metadata → Postgres. uploaded_by is ALWAYS the authenticated
+            //    user — any client-supplied value is ignored.
+            const photo = await insertPhoto(env, {
+              event_id: event.id,
+              uploaded_by: user.id,
+              filename: file.originalname,
+              storage_file_id: stored.storageFileId,
+              mime_type: file.mimetype,
+              file_size: file.size,
+            });
+            uploaded.push(serializePhoto(photo, env));
+          } catch (metaErr) {
+            // Metadata failed → clean up the orphaned Appwrite object.
+            await deletePhotoQuietly(env, stored.storageFileId);
+            throw metaErr;
+          }
+        } catch (err) {
+          console.error("Photo upload failed:", (err as Error).message);
+          const message = uploaded.length
+            ? `Some photos couldn't be uploaded (${uploaded.length} of ${files.length} succeeded). Try again for the rest.`
+            : "Photo upload failed. Please try again.";
+          res.status(502).json({ error: message, uploaded });
+          return;
+        }
+      }
+
+      res.status(201).json({ photos: uploaded });
+    }) as unknown as import("express").RequestHandler
+  );
+
+  router.get("/events/:eventId/photos", (async (req: Request, res: Response) => {
+    const ctx = await authorizeEventAccess(req, res);
+    if (!ctx) return;
+    const photos = await listEventPhotos(env, ctx.event.id);
+    res.json({ photos: photos.map((p) => serializePhoto(p, env)) });
+  }) as unknown as import("express").RequestHandler);
+
+  router.delete("/photos/:photoId", requireRole(env, "ADMIN"), (async (
+    req: Request,
+    res: Response
+  ) => {
+    const actor = await resolveAppUser(env, req);
+    const photo = await getPhotoById(env, String(req.params.photoId));
+    if (!photo) {
+      res.status(404).json({ error: "Photo not found" });
+      return;
+    }
+    // Workspace gate: the photo's event must belong to the admin's workspace.
+    const event = await getWorkspaceEvent(env, photo.event_id, actor.workspace_id);
+    if (!event) {
+      res.status(404).json({ error: "Photo not found" });
+      return;
+    }
+    // 1. Remove the binary first (worst case: orphaned object, no dead link
+    //    serving a deleted photo), then the metadata row.
+    await deletePhotoQuietly(env, photo.storage_file_id);
+    await deletePhoto(env, photo.id);
+    res.status(204).send();
+  }) as unknown as import("express").RequestHandler);
+
+  // ------------------------------------------------------------------
   // Event team membership (workspace-scoped)
   // ------------------------------------------------------------------
 
@@ -454,6 +576,19 @@ export function serializeInvitation(i: DbInvitation) {
     email: i.email,
     status: i.status,
     created_at: new Date(i.created_at).toISOString(),
+  };
+}
+
+export function serializePhoto(p: DbPhoto, appwriteEnv: Env) {
+  return {
+    id: p.id,
+    event_id: p.event_id,
+    uploaded_by: p.uploaded_by,
+    filename: p.filename,
+    mime_type: p.mime_type,
+    file_size: p.file_size,
+    url: photoUrl(appwriteEnv, p.storage_file_id),
+    created_at: new Date(p.created_at).toISOString(),
   };
 }
 

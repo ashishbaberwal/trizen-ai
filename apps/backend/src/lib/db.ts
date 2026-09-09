@@ -214,6 +214,62 @@ export async function upsertUserFromClerk(
 }
 
 // ---------------------------------------------------------------------------
+// Photos (metadata only — binaries live in Appwrite)
+// ---------------------------------------------------------------------------
+
+export type DbPhoto = {
+  id: string;
+  event_id: string;
+  uploaded_by: string;
+  filename: string;
+  storage_file_id: string;
+  storage_provider: string;
+  mime_type: string;
+  file_size: number;
+  created_at: Date;
+  updated_at: Date;
+};
+
+export async function insertPhoto(
+  env: Env,
+  input: {
+    event_id: string;
+    uploaded_by: string;
+    filename: string;
+    storage_file_id: string;
+    mime_type: string;
+    file_size: number;
+  }
+): Promise<DbPhoto> {
+  const result = await getPool(env).query<DbPhoto>(
+    `INSERT INTO photos (event_id, uploaded_by, filename, storage_file_id, mime_type, file_size)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [input.event_id, input.uploaded_by, input.filename, input.storage_file_id, input.mime_type, input.file_size]
+  );
+  return result.rows[0]!;
+}
+
+/** All photos of an event, newest first (scoped by event_id — never global). */
+export async function listEventPhotos(env: Env, eventId: string): Promise<DbPhoto[]> {
+  const result = await getPool(env).query<DbPhoto>(
+    "SELECT * FROM photos WHERE event_id = $1 ORDER BY created_at DESC",
+    [eventId]
+  );
+  return result.rows;
+}
+
+export async function getPhotoById(env: Env, id: string): Promise<DbPhoto | null> {
+  const result = await getPool(env).query<DbPhoto>("SELECT * FROM photos WHERE id = $1", [id]);
+  return result.rows[0] ?? null;
+}
+
+export async function deletePhoto(env: Env, id: string): Promise<boolean> {
+  const result = await getPool(env).query("DELETE FROM photos WHERE id = $1", [id]);
+  return (result.rowCount ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
 // Invitations
 // ---------------------------------------------------------------------------
 

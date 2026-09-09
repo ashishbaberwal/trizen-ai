@@ -102,7 +102,64 @@ export const api = {
     }),
   removeEventMember: (token: string | null, eventId: string, userId: string) =>
     apiFetch<void>(`/events/${eventId}/team-members/${userId}`, { method: "DELETE", token }),
+
+  // ---- Photos ----
+  listPhotos: (token: string | null, eventId: string) =>
+    apiFetch<{ photos: PhotoApi[] }>(`/events/${eventId}/photos`, { token }),
+  deletePhoto: (token: string | null, photoId: string) =>
+    apiFetch<void>(`/photos/${photoId}`, { method: "DELETE", token }),
 };
+
+/**
+ * Upload photos with real progress events. fetch() has no upload progress,
+ * so this uses XMLHttpRequest against the multipart endpoint. Auth token
+ * and identity are identical to apiFetch — the backend derives everything.
+ */
+export function uploadPhotos(
+  token: string | null,
+  eventId: string,
+  files: File[],
+  onProgress?: (percent: number) => void
+): Promise<{ photos: PhotoApi[] }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/api/v1/events/${eventId}/photos`);
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.responseType = "json";
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      const body = xhr.response ?? {};
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body as { photos: PhotoApi[] });
+      } else {
+        reject(new ApiError(xhr.status, body.error ?? `Upload failed (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError(0, "Unable to connect to the server. Please try again."));
+    xhr.ontimeout = () => reject(new ApiError(0, "Upload timed out. Please try again."));
+
+    const form = new FormData();
+    for (const file of files) form.append("photos", file);
+    xhr.send(form);
+  });
+}
+
+export interface PhotoApi {
+  id: string;
+  event_id: string;
+  uploaded_by: string;
+  filename: string;
+  mime_type: string;
+  file_size: number;
+  url: string;
+  created_at: string;
+}
 
 export interface TeamMemberApi {
   id: string;

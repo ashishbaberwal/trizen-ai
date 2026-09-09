@@ -14,11 +14,13 @@
   },
   "dependencies": {
     "@clerk/backend": "^3.17.1",
+    "@types/multer": "^2.2.0",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "helmet": "^8.1.0",
+    "multer": "^2.3.0",
     "node-appwrite": "^29.0.0",
     "pg": "^8.16.3",
     "zod": "^4.5.4"

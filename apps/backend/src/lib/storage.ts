@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Client, Storage } from "node-appwrite";
 
 import type { Env } from "../config/env.js";
@@ -34,4 +35,70 @@ export async function checkBucket(env: Env): Promise<boolean> {
     // Anything else (401, 403, network, wrong endpoint/project) is fatal.
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Photo storage operations
+// ---------------------------------------------------------------------------
+
+/** Allowed upload MIME types (never trust the file extension alone). */
+export const ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+/** 25 MB per photo — matches a real photography workflow without being lax. */
+export const MAX_PHOTO_BYTES = 25 * 1024 * 1024;
+
+export type StoredPhoto = {
+  storageFileId: string;
+  size: number;
+};
+
+/**
+ * Upload a photo buffer to Appwrite under a collision-resistant UUID.
+ * The original filename is preserved as Appwrite file metadata only —
+ * never used as the storage identifier (no path traversal, no clobbering).
+ */
+export async function uploadPhoto(
+  env: Env,
+  buffer: Buffer,
+  mimeType: string,
+  originalFilename: string
+): Promise<StoredPhoto> {
+  const storageFileId = randomUUID();
+  // node-appwrite v29 accepts native File objects. The original filename is
+  // preserved as Appwrite file metadata only — never used as the storage
+  // identifier (no path traversal, no clobbering).
+  const file = new File([buffer], originalFilename, { type: mimeType });
+  await getStorage(env).createFile({
+    bucketId: env.APPWRITE_BUCKET_ID,
+    fileId: storageFileId,
+    file,
+  });
+  return { storageFileId, size: buffer.byteLength };
+}
+
+/** Best-effort cleanup when a later step (e.g. metadata insert) fails. */
+export async function deletePhotoQuietly(env: Env, storageFileId: string): Promise<void> {
+  try {
+    await getStorage(env).deleteFile({
+      bucketId: env.APPWRITE_BUCKET_ID,
+      fileId: storageFileId,
+    });
+  } catch (err) {
+    // Orphaned object is preferable to failing the request twice — log only.
+    console.error(`Appwrite cleanup failed for ${storageFileId}:`, (err as Error).message);
+  }
+}
+
+/**
+ * Build a stable, public download URL for a stored photo. The bucket is
+ * file-security enabled; backend permission grants access, so the plain
+ * view URL works for <img> tags without exposing any API key.
+ */
+export function photoUrl(env: Env, storageFileId: string): string {
+  const base = env.APPWRITE_ENDPOINT.replace(/\/v1\/?$/, "");
+  return `${base}/v1/storage/buckets/${env.APPWRITE_BUCKET_ID}/files/${storageFileId}/view?project=${env.APPWRITE_PROJECT_ID}`;
 }

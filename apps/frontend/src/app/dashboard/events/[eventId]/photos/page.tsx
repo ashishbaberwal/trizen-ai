@@ -4,26 +4,24 @@ import * as React from "react";
 import {
   ArrowUpDown,
   CheckSquare,
-  Download,
-  FolderPlus,
-  Search,
+  Images,
   Square,
   Upload,
   X,
-  Images,
 } from "lucide-react";
+import { useAuth } from "@clerk/nextjs";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import { cn, formatNumber } from "@/lib/utils";
-import { photoService } from "@/lib/services";
+import { api, ApiError, type PhotoApi } from "@/lib/api/client";
+import { useCurrentUserState } from "@/lib/api/use-current-user";
 import type { Photo } from "@/types";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { PhotoCard } from "@/components/photos/photo-card";
 import { UploadModal } from "@/components/photos/upload-modal";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -32,54 +30,126 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CreateGalleryWizard } from "@/components/galleries/create-gallery-wizard";
 
-type Filter = "all" | "selected" | "unselected";
 type Sort = "newest" | "oldest" | "uploader";
 
+/**
+ * Real photo workspace: list comes from GET /api/v1/events/:id/photos,
+ * uploads go through the multipart endpoint (Appwrite + Postgres).
+ * Local selection state is temporary UI only — gallery persistence is a
+ * later phase and is intentionally NOT wired here.
+ */
 export default function PhotosPage() {
   const params = useParams<{ eventId: string }>();
   const searchParams = useSearchParams();
   const router = useRouter();
   const eventId = params.eventId;
+  const { getToken } = useAuth();
+  const { user } = useCurrentUserState();
+  const isAdmin = user?.role === "admin";
 
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
   const [photos, setPhotos] = React.useState<Photo[]>([]);
-  const [filter, setFilter] = React.useState<Filter>("all");
   const [sort, setSort] = React.useState<Sort>("newest");
-  const [query, setQuery] = React.useState("");
   const [uploadOpen, setUploadOpen] = React.useState(false);
-  const [wizardOpen, setWizardOpen] = React.useState(searchParams.get("createGallery") === "1");
   const lastClickedIndex = React.useRef<number | null>(null);
+
+  // Phase-4 (gallery) deep link is no longer part of this flow.
+  const hasGalleryParam = searchParams.get("createGallery") === "1";
+  React.useEffect(() => {
+    if (hasGalleryParam) {
+      toast.info("Galleries arrive in the next phase — selection is stored for later.");
+      router.replace(`/dashboard/events/${eventId}/photos`);
+    }
+  }, [hasGalleryParam, eventId, router]);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      const data = await api.listPhotos(token, eventId);
+      setPhotos(
+        data.photos.map((p: PhotoApi) => ({
+          id: p.id,
+          eventId: p.event_id,
+          url: p.url,
+          fullUrl: p.url,
+          width: 0,
+          height: 0,
+          uploaderName: "Team member", // uploader names resolve in a later pass
+          uploadedAt: p.created_at,
+          selected: false,
+        }))
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setError("You don't have permission to view photos for this event.");
+      } else if (err instanceof ApiError && err.status === 404) {
+        setError("Event not found, or it belongs to another workspace.");
+      } else {
+        setError("Unable to connect to the server. Please try again.");
+      }
+      setPhotos([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [eventId, getToken]);
+  void load; // retained for retry button
 
   React.useEffect(() => {
     let cancelled = false;
-    photoService.listByEvent(eventId).then((data) => {
-      if (!cancelled) {
-        setPhotos(data);
-        setLoading(false);
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const token = await getToken();
+        const data = await api.listPhotos(token, eventId);
+        if (cancelled) return;
+        setPhotos(
+          data.photos.map((p: PhotoApi) => ({
+            id: p.id,
+            eventId: p.event_id,
+            url: p.url,
+            fullUrl: p.url,
+            width: 0,
+            height: 0,
+            uploaderName: "Team member", // uploader names resolve in a later pass
+            uploadedAt: p.created_at,
+            selected: false,
+          }))
+        );
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 403) {
+          setError("You don't have permission to view photos for this event.");
+        } else if (err instanceof ApiError && err.status === 404) {
+          setError("Event not found, or it belongs to another workspace.");
+        } else {
+          setError("Unable to connect to the server. Please try again.");
+        }
+        setPhotos([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    });
+    })();
     return () => {
       cancelled = true;
     };
-  }, [eventId]);
+  }, [eventId, getToken]);
 
   const visible = React.useMemo(() => {
-    let list = [...photos];
-    if (filter === "selected") list = list.filter((p) => p.selected);
-    if (filter === "unselected") list = list.filter((p) => !p.selected);
-    if (query) list = list.filter((p) => p.uploaderName.toLowerCase().includes(query.toLowerCase()));
+    const list = [...photos];
     list.sort((a, b) => {
       if (sort === "newest") return +new Date(b.uploadedAt) - +new Date(a.uploadedAt);
       if (sort === "oldest") return +new Date(a.uploadedAt) - +new Date(b.uploadedAt);
       return a.uploaderName.localeCompare(b.uploaderName);
     });
     return list;
-  }, [photos, filter, sort, query]);
+  }, [photos, sort]);
 
   const selectedIds = React.useMemo(() => photos.filter((p) => p.selected).map((p) => p.id), [photos]);
-  const visibleSelectedCount = visible.filter((p) => p.selected).length;
 
   function togglePhoto(photo: Photo, shiftKey: boolean) {
     setPhotos((prev) => {
@@ -101,20 +171,15 @@ export default function PhotosPage() {
     });
   }
 
-  function setAll(selected: boolean) {
-    setPhotos((prev) => prev.map((p) => ({ ...p, selected })));
-  }
-
   function selectVisible(selected: boolean) {
     const ids = new Set(visible.map((p) => p.id));
     setPhotos((prev) => prev.map((p) => (ids.has(p.id) ? { ...p, selected } : p)));
   }
 
-  async function saveSelection() {
-    await photoService.setSelected(selectedIds, true, eventId);
-  }
-
-  const crumbs = [{ label: "Events", href: "/dashboard/events" }, { label: "Photos", href: `/dashboard/events/${eventId}/photos` }];
+  const crumbs = [
+    { label: "Events", href: "/dashboard/events" },
+    { label: "Photos", href: `/dashboard/events/${eventId}/photos` },
+  ];
 
   return (
     <AppShell
@@ -135,62 +200,35 @@ export default function PhotosPage() {
           ) : (
             `${formatNumber(photos.length)} photos uploaded`
           )}
-          {" · "}
-          {formatNumber(selectedIds.length)} selected
+          {isAdmin && photos.length > 0 && ` · ${formatNumber(selectedIds.length)} selected`}
         </p>
 
         {/* Toolbar */}
-        <div className="mt-6 flex flex-wrap items-center gap-2">
-          <div className="rounded-lg border p-0.5" role="group" aria-label="Filter photos">
-            {(["all", "selected", "unselected"] as Filter[]).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                aria-pressed={filter === f}
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-sm capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer",
-                  filter === f ? "bg-secondary font-medium text-foreground" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-
-          <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
-            <SelectTrigger className="w-[150px]" aria-label="Sort photos">
-              <ArrowUpDown className="size-3.5 text-muted-foreground" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="newest">Newest first</SelectItem>
-              <SelectItem value="oldest">Oldest first</SelectItem>
-              <SelectItem value="uploader">By uploader</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <div className="relative ml-auto w-full sm:w-52">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter by uploader"
-              className="pl-8"
-              aria-label="Filter by uploader"
-            />
-          </div>
-        </div>
-
-        {/* Bulk actions row */}
         {!loading && photos.length > 0 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            <Button variant="ghost" size="sm" onClick={() => selectVisible(true)} disabled={visibleSelectedCount === visible.length}>
-              <CheckSquare /> Select all shown
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => selectVisible(false)} disabled={visibleSelectedCount === 0}>
-              <Square /> Deselect shown
-            </Button>
-            <span className="hidden sm:inline">Tip: hold Shift to select a range.</span>
+          <div className="mt-6 flex flex-wrap items-center gap-2">
+            <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
+              <SelectTrigger className="w-[150px]" aria-label="Sort photos">
+                <ArrowUpDown className="size-3.5 text-muted-foreground" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest first</SelectItem>
+                <SelectItem value="oldest">Oldest first</SelectItem>
+                <SelectItem value="uploader">By uploader</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {isAdmin && (
+              <Button variant="ghost" size="sm" onClick={() => selectVisible(true)}>
+                <CheckSquare /> Select all shown
+              </Button>
+            )}
+            {isAdmin && selectedIds.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => selectVisible(false)}>
+                <Square /> Deselect shown
+              </Button>
+            )}
+            {isAdmin && <span className="hidden sm:inline text-xs text-muted-foreground">Tip: hold Shift to select a range.</span>}
           </div>
         )}
 
@@ -201,20 +239,24 @@ export default function PhotosPage() {
               <Skeleton key={i} className={cn("rounded-lg", i % 3 === 0 ? "aspect-[3/4]" : i % 3 === 1 ? "aspect-[4/3]" : "aspect-square")} />
             ))}
           </div>
+        ) : error ? (
+          <EmptyState
+            icon={X}
+            title="Couldn't load photos"
+            description={error}
+            action={{ label: "Try again", onClick: () => void load() }}
+            className="mt-6 rounded-xl border border-dashed"
+          />
         ) : photos.length === 0 ? (
           <EmptyState
             icon={Images}
-            title="No photos yet"
-            description="Photos from your team will appear here as soon as they upload."
+            title="No photos uploaded yet"
+            description={
+              isAdmin
+                ? "Your team hasn't uploaded any photos to this event yet."
+                : "Upload your first photos to this event."
+            }
             action={{ label: "Upload photos", onClick: () => setUploadOpen(true) }}
-            className="mt-6 rounded-xl border border-dashed"
-          />
-        ) : visible.length === 0 ? (
-          <EmptyState
-            icon={Search}
-            title="Nothing matches"
-            description="No photos match this combination of filter, sort, and search. Clear them to see everything."
-            action={{ label: "Clear filters", onClick: () => { setFilter("all"); setQuery(""); } }}
             className="mt-6 rounded-xl border border-dashed"
           />
         ) : (
@@ -224,15 +266,15 @@ export default function PhotosPage() {
                 key={photo.id}
                 photo={photo}
                 selected={photo.selected}
-                onToggle={togglePhoto}
+                onToggle={isAdmin ? togglePhoto : undefined}
               />
             ))}
           </div>
         )}
       </div>
 
-      {/* Sticky selection toolbar */}
-      {!loading && selectedIds.length > 0 && (
+      {/* Sticky selection toolbar (admin-only; gallery wiring is Phase 4) */}
+      {isAdmin && selectedIds.length > 0 && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85 animate-fade-up lg:pl-60">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 md:px-6">
             <p className="text-sm font-medium">
@@ -242,17 +284,15 @@ export default function PhotosPage() {
             <div className="ml-auto flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
-                onClick={() => {
-                  saveSelection();
-                  setWizardOpen(true);
-                }}
+                onClick={() =>
+                  toast.info("Galleries arrive in the next phase", {
+                    description: `${selectedIds.length} photo(s) will carry over.`,
+                  })
+                }
               >
-                <FolderPlus /> Add to gallery
+                Add to gallery
               </Button>
-              <Button variant="outline" size="sm" onClick={() => toast.success("Download started", { description: `${selectedIds.length} photos will be packaged as a ZIP.` })}>
-                <Download /> Download
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setAll(false)}>
+              <Button variant="ghost" size="sm" onClick={() => selectVisible(false)}>
                 <X /> Clear
               </Button>
             </div>
@@ -260,15 +300,11 @@ export default function PhotosPage() {
         </div>
       )}
 
-      <UploadModal open={uploadOpen} onOpenChange={setUploadOpen} />
-      <CreateGalleryWizard
-        open={wizardOpen}
-        onOpenChange={(open) => {
-          setWizardOpen(open);
-          if (!open) router.replace(`/dashboard/events/${eventId}/photos`);
-        }}
+      <UploadModal
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
         eventId={eventId}
-        photos={photos}
+        onUploaded={() => void load()}
       />
     </AppShell>
   );

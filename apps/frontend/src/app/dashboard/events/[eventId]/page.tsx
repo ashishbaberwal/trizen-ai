@@ -16,7 +16,9 @@ import {
 } from "lucide-react";
 
 import { formatDate, formatNumber, timeAgo } from "@/lib/utils";
-import { eventService, galleryService, photoService, teamService } from "@/lib/services";
+import { eventService, galleryService, teamService } from "@/lib/services";
+import { api } from "@/lib/api/client";
+import { useAuth } from "@clerk/nextjs";
 import { useCurrentUser } from "@/lib/api/use-current-user";
 import type { Event, Gallery, Photo, TeamMember } from "@/types";
 import { AppShell } from "@/components/dashboard/app-shell";
@@ -34,6 +36,7 @@ export default function EventDetailPage() {
   const params = useParams<{ eventId: string }>();
   const eventId = params.eventId;
   const user = useCurrentUser();
+  const { getToken } = useAuth();
   const [loading, setLoading] = React.useState(true);
   const [event, setEvent] = React.useState<Event | null>(null);
   const [members, setMembers] = React.useState<TeamMember[]>([]);
@@ -45,23 +48,41 @@ export default function EventDetailPage() {
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [event, members, galleries, photos] = await Promise.all([
+      const token = await getToken();
+      // Photos come from the real API; event/team/galleries remain mock-served
+      // until their phases wire them up.
+      const [event, members, galleries, photosRes] = await Promise.all([
         eventService.get(eventId),
         teamService.listByEvent(eventId),
         galleryService.listByEvent(eventId),
-        photoService.listByEvent(eventId),
+        api
+          .listPhotos(token, eventId)
+          .then((r) =>
+            r.photos.map((p) => ({
+              id: p.id,
+              eventId: p.event_id,
+              url: p.url,
+              fullUrl: p.url,
+              width: 0,
+              height: 0,
+              uploaderName: "Team member",
+              uploadedAt: p.created_at,
+              selected: false,
+            })) as Photo[]
+          )
+          .catch(() => [] as Photo[]),
       ]);
       if (cancelled) return;
       setEvent(event ?? null);
       setMembers(members);
       setGalleries(galleries);
-      setPhotos(photos);
+      setPhotos(photosRes);
       setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [eventId]);
+  }, [eventId, getToken]);
 
   const selectedCount = photos.filter((p) => p.selected).length;
 
@@ -300,7 +321,15 @@ export default function EventDetailPage() {
         </Tabs>
       </div>
 
-      <UploadModal open={uploadOpen} onOpenChange={setUploadOpen} />
+      <UploadModal
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        eventId={eventId}
+        onUploaded={() => {
+          // Refresh the photo count in the overview after an upload.
+          window.location.reload();
+        }}
+      />
       <AddMemberModal open={memberOpen} onOpenChange={setMemberOpen} eventId={event.id} />
     </AppShell>
   );
