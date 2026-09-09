@@ -4,9 +4,10 @@ import * as React from "react";
 import { LayoutGrid, List, Plus, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { eventService } from "@/lib/services";
+import { api, ApiError } from "@/lib/api/client";
 import { useCurrentUserState } from "@/lib/api/use-current-user";
 import type { Event, EventStatus } from "@/types";
+import { useAuth } from "@clerk/nextjs";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { EventCard } from "@/components/events/event-card";
 import { CreateEventModal } from "@/components/events/create-event-modal";
@@ -39,25 +40,66 @@ const STATUS_FILTERS: { value: EventStatus | "all"; label: string }[] = [
 export default function EventsPage() {
   const { user } = useCurrentUserState();
   const isAdmin = user?.role === "admin";
+  const { getToken } = useAuth();
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
   const [events, setEvents] = React.useState<Event[]>([]);
   const [query, setQuery] = React.useState("");
   const [status, setStatus] = React.useState<EventStatus | "all">("all");
   const [view, setView] = React.useState<"grid" | "list">("grid");
   const [createOpen, setCreateOpen] = React.useState(false);
 
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      const data = await api.listEvents(token);
+      // Map API events onto the UI shape. Cover uses a deterministic
+      // Unsplash fallback until custom covers exist; counts are real where
+      // the API provides them.
+      const covers = [
+        "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&h=450&q=80",
+        "https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=800&h=450&q=80",
+        "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?auto=format&fit=crop&w=800&h=450&q=80",
+      ];
+      setEvents(
+        data.events.map((e, i) => ({
+          id: e.id,
+          slug: e.id,
+          name: e.name,
+          description: e.description,
+          date: e.date,
+          location: e.location,
+          coverUrl: covers[i % covers.length],
+          photoCount: 0,
+          teamMemberCount: 0,
+          status: e.status,
+          lastActivity: e.createdAt,
+          createdAt: e.createdAt,
+        }))
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setError("You don't have permission to view events.");
+      } else {
+        setError("Unable to connect to the server. Please try again.");
+      }
+      setEvents([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
+
   React.useEffect(() => {
     let cancelled = false;
-    eventService.list().then((data) => {
-      if (!cancelled) {
-        setEvents(data);
-        setLoading(false);
-      }
-    });
+    void (async () => {
+      if (!cancelled) await load();
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [load]);
 
   const filtered = events.filter((event) => {
     const matchesQuery =
@@ -145,6 +187,14 @@ export default function EventsPage() {
               </div>
             ))}
           </div>
+        ) : error ? (
+          <EmptyState
+            icon={Search}
+            title="Couldn't load events"
+            description={error}
+            action={{ label: "Try again", onClick: () => void load() }}
+            className="rounded-xl border border-dashed"
+          />
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={Search}

@@ -9,7 +9,8 @@ import { Loader2, ImagePlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
-import { eventService } from "@/lib/services";
+import { useAuth } from "@clerk/nextjs";
+import { api } from "@/lib/api/client";
 import type { Event } from "@/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,7 +52,9 @@ export function CreateEventModal({
   onCreated?: (event: Event) => void;
 }) {
   const router = useRouter();
+  const { getToken } = useAuth();
   const [cover, setCover] = React.useState(COVER_CHOICES[0]);
+  const [serverError, setServerError] = React.useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -63,13 +66,42 @@ export function CreateEventModal({
   });
 
   async function onSubmit(values: CreateEventValues) {
-    const event = await eventService.create({ ...values, coverUrl: cover });
-    onCreated?.(event);
-    toast.success("Event created", { description: `${values.name} is ready for uploads.` });
-    reset();
-    setCover(COVER_CHOICES[0]);
-    onOpenChange(false);
-    router.refresh();
+    setServerError(null);
+    try {
+      const token = await getToken();
+      // The backend derives workspace/creator from the verified Clerk token.
+      const { event } = await api.createEvent(token, {
+        name: values.name,
+        description: values.description || undefined,
+        location: values.location,
+        event_date: values.date,
+      });
+      onCreated?.({
+        id: event.id,
+        slug: event.id,
+        name: event.name,
+        description: event.description,
+        date: event.date,
+        location: event.location,
+        coverUrl: cover,
+        photoCount: 0,
+        teamMemberCount: 0,
+        status: event.status,
+        lastActivity: event.createdAt,
+        createdAt: event.createdAt,
+      });
+      toast.success("Event created", { description: `${values.name} is ready for uploads.` });
+      reset();
+      setCover(COVER_CHOICES[0]);
+      onOpenChange(false);
+      router.refresh();
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message.includes("permission")
+          ? "You don't have permission to create events."
+          : "Unable to create event. Please try again.";
+      setServerError(message);
+    }
   }
 
   return (
@@ -148,6 +180,12 @@ export function CreateEventModal({
               Custom covers can be uploaded once storage is connected.
             </p>
           </div>
+
+          {serverError && (
+            <p className="text-xs text-destructive" role="alert">
+              {serverError}
+            </p>
+          )}
 
           <DialogFooter className="mt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

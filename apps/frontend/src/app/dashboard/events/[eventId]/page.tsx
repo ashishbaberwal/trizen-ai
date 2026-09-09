@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 
 import { formatDate, formatNumber, timeAgo } from "@/lib/utils";
-import { eventService, galleryService, teamService } from "@/lib/services";
+import { galleryService, teamService } from "@/lib/services";
 import { api } from "@/lib/api/client";
 import { useAuth } from "@clerk/nextjs";
 import { useCurrentUser } from "@/lib/api/use-current-user";
@@ -49,10 +49,27 @@ export default function EventDetailPage() {
     let cancelled = false;
     (async () => {
       const token = await getToken();
-      // Photos come from the real API; event/team/galleries remain mock-served
-      // until their phases wire them up.
-      const [event, members, galleries, photosRes] = await Promise.all([
-        eventService.get(eventId),
+      // Event + photos come from the real API. Team/galleries remain
+      // mock-served until their phases wire them up.
+      const [eventRes, members, galleries, photos] = await Promise.all([
+        api
+          .getEvent(token, eventId)
+          .then((r) => ({
+            id: r.event.id,
+            slug: r.event.id,
+            name: r.event.name,
+            description: r.event.description,
+            date: r.event.date,
+            location: r.event.location,
+            coverUrl:
+              "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&h=500&q=80",
+            photoCount: 0,
+            teamMemberCount: 0,
+            status: r.event.status,
+            lastActivity: r.event.createdAt,
+            createdAt: r.event.createdAt,
+          }))
+          .catch(() => null),
         teamService.listByEvent(eventId),
         galleryService.listByEvent(eventId),
         api
@@ -73,10 +90,10 @@ export default function EventDetailPage() {
           .catch(() => [] as Photo[]),
       ]);
       if (cancelled) return;
-      setEvent(event ?? null);
+      setEvent(eventRes);
       setMembers(members);
       setGalleries(galleries);
-      setPhotos(photosRes);
+      setPhotos(photos);
       setLoading(false);
     })();
     return () => {
