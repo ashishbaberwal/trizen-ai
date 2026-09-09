@@ -5,13 +5,13 @@ import {
   ArrowUpDown,
   CheckSquare,
   Images,
+  Sparkles,
   Square,
   Upload,
   X,
 } from "lucide-react";
 import { useAuth } from "@clerk/nextjs";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { toast } from "sonner";
 
 import { cn, formatNumber } from "@/lib/utils";
 import { api, ApiError, type PhotoApi } from "@/lib/api/client";
@@ -20,6 +20,7 @@ import type { Photo } from "@/types";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { PhotoCard } from "@/components/photos/photo-card";
 import { UploadModal } from "@/components/photos/upload-modal";
+import { CreateGalleryWizard } from "@/components/galleries/create-gallery-wizard";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -51,25 +52,36 @@ export default function PhotosPage() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [photos, setPhotos] = React.useState<Photo[]>([]);
+  const [eventName, setEventName] = React.useState("Event");
   const [sort, setSort] = React.useState<Sort>("newest");
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [wizardOpen, setWizardOpen] = React.useState(false);
   const lastClickedIndex = React.useRef<number | null>(null);
 
-  // Phase-4 (gallery) deep link is no longer part of this flow.
-  const hasGalleryParam = searchParams.get("createGallery") === "1";
+  // Deep link from the event page opens the gallery wizard directly.
+  const openWizardParam = searchParams.get("createGallery") === "1";
   React.useEffect(() => {
-    if (hasGalleryParam) {
-      toast.info("Galleries arrive in the next phase — selection is stored for later.");
+    if (!openWizardParam || !isAdmin) return;
+    const t = setTimeout(() => {
+      setWizardOpen(true);
       router.replace(`/dashboard/events/${eventId}/photos`);
-    }
-  }, [hasGalleryParam, eventId, router]);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [openWizardParam, isAdmin, eventId, router]);
 
   const load = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const token = await getToken();
-      const data = await api.listPhotos(token, eventId);
+      const [data, eventRes] = await Promise.all([
+        api.listPhotos(token, eventId),
+        api
+          .getEvent(token, eventId)
+          .then((r) => r.event.name)
+          .catch(() => "Event"),
+      ]);
+      setEventName(eventRes);
       setPhotos(
         data.photos.map((p: PhotoApi) => ({
           id: p.id,
@@ -273,7 +285,7 @@ export default function PhotosPage() {
         )}
       </div>
 
-      {/* Sticky selection toolbar (admin-only; gallery wiring is Phase 4) */}
+      {/* Sticky selection toolbar (admin-only) */}
       {isAdmin && selectedIds.length > 0 && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85 animate-fade-up lg:pl-60">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 md:px-6">
@@ -282,15 +294,8 @@ export default function PhotosPage() {
               {selectedIds.length === 1 ? "photo" : "photos"} selected
             </p>
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                onClick={() =>
-                  toast.info("Galleries arrive in the next phase", {
-                    description: `${selectedIds.length} photo(s) will carry over.`,
-                  })
-                }
-              >
-                Add to gallery
+              <Button size="sm" onClick={() => setWizardOpen(true)}>
+                <Sparkles /> Create gallery
               </Button>
               <Button variant="ghost" size="sm" onClick={() => selectVisible(false)}>
                 <X /> Clear
@@ -306,6 +311,16 @@ export default function PhotosPage() {
         eventId={eventId}
         onUploaded={() => void load()}
       />
+
+      {isAdmin && (
+        <CreateGalleryWizard
+          open={wizardOpen}
+          onOpenChange={setWizardOpen}
+          eventId={eventId}
+          eventName={eventName}
+          photos={photos}
+        />
+      )}
     </AppShell>
   );
 }

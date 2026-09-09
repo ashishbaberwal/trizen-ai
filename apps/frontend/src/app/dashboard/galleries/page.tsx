@@ -1,33 +1,25 @@
 "use client";
 
 import * as React from "react";
-import Image from "next/image";
 import Link from "next/link";
 import {
   Calendar,
   Copy,
-  ExternalLink,
   Images,
-  MoreHorizontal,
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@clerk/nextjs";
 
 import { formatDate, formatNumber } from "@/lib/utils";
-import { galleryService } from "@/lib/services";
+import { api, ApiError, type GalleryApi } from "@/lib/api/client";
+import { useCurrentUserState } from "@/lib/api/use-current-user";
 import type { Gallery } from "@/types";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { GalleryStatusBadge } from "@/components/dashboard/status-badge";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,33 +30,78 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { CreateGalleryWizard } from "@/components/galleries/create-gallery-wizard";
 
+/**
+ * Admin galleries index — real data from the workspace-scoped API.
+ * Galleries are created from an event's photo workspace, so the primary
+ * action here explains where to start; per-event galleries are listed.
+ */
 export default function GalleriesPage() {
+  const { getToken } = useAuth();
+  const { user, loading: roleLoading } = useCurrentUserState();
+  const isAdmin = user?.role === "admin";
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
   const [galleries, setGalleries] = React.useState<Gallery[]>([]);
-  const [wizardOpen, setWizardOpen] = React.useState(false);
   const [confirmGallery, setConfirmGallery] = React.useState<Gallery | null>(null);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    galleryService.list().then((data) => {
-      if (!cancelled) {
-        setGalleries(data);
-        setLoading(false);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      // Derive the workspace gallery list from the user's events.
+      const { events } = await api.listEvents(token);
+      const perEvent = await Promise.all(
+        events.map((e) =>
+          api
+            .listEventGalleries(token, e.id)
+            .then((r) => r.galleries)
+            .catch(() => [] as GalleryApi[])
+        )
+      );
+      setGalleries(
+        perEvent.flat().map((g) => ({
+          id: g.id,
+          slug: g.slug,
+          eventId: g.event_id,
+          eventName: events.find((e) => e.id === g.event_id)?.name ?? "Event",
+          name: g.name,
+          description: g.description,
+          coverUrl:
+            "https://images.unsplash.com/photo-1450388940901-a4598e4b87c8?auto=format&fit=crop&w=800&h=450&q=80",
+          photoCount: g.photo_count,
+          status: g.status,
+          createdAt: g.created_at,
+          publishedAt: g.published_at ?? undefined,
+          expiresAt: undefined,
+          pin: g.pin,
+          url: `${window.location.origin}/gallery/${g.slug}`,
+          downloadEnabled: false,
+        }))
+      );
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 403
+          ? "You don't have permission to view galleries."
+          : "Unable to connect to the server. Please try again."
+      );
+      setGalleries([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
 
-  async function setStatus(gallery: Gallery, status: Gallery["status"]) {
-    await galleryService.setStatus(gallery.id, status);
-    setGalleries((prev) => prev.map((g) => (g.id === gallery.id ? { ...g, status } : g)));
-    toast.success(status === "published" ? "Gallery published" : "Gallery unpublished", {
-      description: gallery.name,
-    });
+  React.useEffect(() => {
+    if (roleLoading) return;
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
+  }, [roleLoading, load]);
+
+  async function unpublish(gallery: Gallery) {
+    // Unpublish isn't part of this phase's API surface — be honest about it.
+    toast.info("Unpublishing arrives with the customer gallery phase.");
+    void gallery;
   }
 
   function copy(text: string, label: string) {
@@ -79,10 +116,14 @@ export default function GalleriesPage() {
       title="Galleries"
       crumbs={[{ label: "Galleries" }]}
       actions={
-        <Button size="sm" onClick={() => setWizardOpen(true)}>
-          <Sparkles /> <span className="hidden sm:inline">New gallery</span>
-          <span className="sm:hidden">New</span>
-        </Button>
+        isAdmin ? (
+          <Button size="sm" asChild>
+            <Link href="/dashboard/events">
+              <Sparkles /> <span className="hidden sm:inline">New gallery</span>
+              <span className="sm:hidden">New</span>
+            </Link>
+          </Button>
+        ) : undefined
       }
     >
       <div className="animate-fade-up">
@@ -101,12 +142,20 @@ export default function GalleriesPage() {
               </div>
             ))}
           </div>
+        ) : error ? (
+          <EmptyState
+            icon={Images}
+            title="Couldn't load galleries"
+            description={error}
+            action={{ label: "Try again", onClick: () => void load() }}
+            className="mt-6 rounded-xl border border-dashed"
+          />
         ) : galleries.length === 0 ? (
           <EmptyState
             icon={Images}
             title="No galleries yet"
-            description="Pick photos from an event and turn them into a private, PIN-protected gallery."
-            action={{ label: "Create gallery", onClick: () => setWizardOpen(true) }}
+            description="Open an event, select photos, and choose “Create gallery” to build your first private client gallery."
+            action={{ label: "Go to events", href: "/dashboard/events" }}
             className="mt-6 rounded-xl border border-dashed"
           />
         ) : (
@@ -117,50 +166,7 @@ export default function GalleriesPage() {
                 className="group overflow-hidden rounded-xl border bg-card transition-shadow hover:shadow-md"
               >
                 <div className="relative aspect-[16/9] overflow-hidden bg-secondary">
-                  <Image
-                    src={gallery.coverUrl}
-                    alt=""
-                    fill
-                    sizes="(max-width: 640px) 100vw, (max-width: 1280px) 50vw, 420px"
-                    className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                  />
-                  <div className="absolute right-2.5 top-2.5">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="secondary"
-                          size="icon-sm"
-                          aria-label={`Actions for ${gallery.name}`}
-                          className="bg-white/90 text-neutral-900 shadow-sm hover:bg-white"
-                        >
-                          <MoreHorizontal />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-44">
-                        <DropdownMenuItem asChild>
-                          <Link href={`/gallery/${gallery.slug}`} target="_blank">
-                            <ExternalLink /> View
-                          </Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => copy(gallery.url, "Link")}>
-                          <Copy /> Copy link
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        {gallery.status === "published" ? (
-                          <DropdownMenuItem
-                            destructive
-                            onSelect={() => setConfirmGallery(gallery)}
-                          >
-                            Unpublish
-                          </DropdownMenuItem>
-                        ) : (
-                          <DropdownMenuItem onSelect={() => setStatus(gallery, "published")}>
-                            <Sparkles /> Publish
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+                  <Images className="absolute inset-0 m-auto size-10 text-muted-foreground/40" aria-hidden="true" />
                 </div>
                 <div className="p-4">
                   <div className="flex items-start justify-between gap-2">
@@ -181,7 +187,9 @@ export default function GalleriesPage() {
                   </div>
                   {gallery.status === "published" && (
                     <div className="mt-3 flex items-center gap-2 rounded-lg bg-secondary/70 px-2.5 py-2">
-                      <code className="truncate font-mono text-xs text-muted-foreground">{gallery.url}</code>
+                      <code className="truncate font-mono text-xs text-muted-foreground">
+                        /gallery/{gallery.slug}
+                      </code>
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -200,15 +208,12 @@ export default function GalleriesPage() {
         )}
       </div>
 
-      <CreateGalleryWizard open={wizardOpen} onOpenChange={setWizardOpen} eventId={null} photos={[]} />
-
       <AlertDialog open={!!confirmGallery} onOpenChange={(o) => !o && setConfirmGallery(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Unpublish this gallery?</AlertDialogTitle>
             <AlertDialogDescription>
-              “{confirmGallery?.name}” will stop being reachable at its link. Clients who open it
-              will see that the gallery isn&apos;t available. You can publish it again later.
+              “{confirmGallery?.name}” will stop being reachable at its link. You can publish it again later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -216,7 +221,7 @@ export default function GalleriesPage() {
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
-                if (confirmGallery) setStatus(confirmGallery, "draft");
+                if (confirmGallery) void unpublish(confirmGallery);
                 setConfirmGallery(null);
               }}
             >

@@ -1,33 +1,43 @@
 import { Router, type Request, type Response } from "express";
+import { randomInt } from "node:crypto";
 import { z } from "zod";
 
 import type { Env } from "../config/env.js";
 import {
   addEventMember,
+  associateGalleryPhotos,
   checkDatabase,
   createEvent,
   createInvitation,
   deleteEvent,
   deletePhoto,
   getEventById,
+  getGalleryById,
   getPendingInvitationByEmail,
   getPhotoById,
   getUserByClerkId,
   getUserById,
   getWorkspaceEvent,
+  insertGallery,
   insertPhoto,
   isEventMember,
+  listEventGalleries,
   listEventMembers,
   listEventPhotos,
   listEventsForUser,
+  listGalleryPhotoIds,
   listPendingInvitationsForWorkspace,
   listWorkspaceUsers,
   markInvitationAccepted,
+  photosInEvent,
+  publishGallery,
   removeEventMember,
   setUserRole,
+  uniqueGallerySlug,
   updateEvent,
   upsertUserFromClerk,
   type DbEvent,
+  type DbGallery,
   type DbInvitation,
   type DbPhoto,
   type DbUser,
@@ -65,6 +75,11 @@ const inviteSchema = z.object({
 
 const assignSchema = z.object({ user_id: z.string().uuid() });
 const roleSchema = z.object({ role: z.enum(["ADMIN", "TEAM_MEMBER"]) });
+const createGallerySchema = z.object({
+  name: z.string().min(2).max(120),
+  description: z.string().max(500).optional(),
+  photo_ids: z.array(z.string().uuid()).min(1).max(500),
+});
 
 /**
  * Resolve the Postgres row for the verified Clerk identity on the request.
@@ -528,6 +543,108 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
     res.status(204).send();
   }) as unknown as import("express").RequestHandler);
 
+  // ------------------------------------------------------------------
+  // Galleries (ADMIN only, workspace-scoped, event-bound)
+  // ------------------------------------------------------------------
+
+  /**
+   * Create a gallery for an event with selected photos. The PIN is always
+   * generated server-side; the slug is derived from the name and made
+   * unique. Every photo ID must belong to the same event — enforced in SQL.
+   */
+  router.post("/events/:id/galleries", requireRole(env, "ADMIN"), (async (
+    req: Request,
+    res: Response
+  ) => {
+    const parsed = createGallerySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid input", details: parsed.error.flatten() });
+      return;
+    }
+    const actor = await resolveAppUser(env, req);
+    const event = await getWorkspaceEvent(env, String(req.params.id), actor.workspace_id);
+    if (!event) {
+      res.status(404).json({ error: "Event not found" });
+      return;
+    }
+
+    // Selected photos must exist AND belong to this event.
+    const photoIds = parsed.data.photo_ids;
+    if (photoIds.length === 0) {
+      res.status(400).json({ error: "Select at least one photo" });
+      return;
+    }
+    const validCount = await photosInEvent(env, photoIds, event.id);
+    if (validCount !== photoIds.length) {
+      res.status(400).json({ error: "Some selected photos don't belong to this event" });
+      return;
+    }
+
+    // Secure 6-digit PIN, server-generated (crypto random, no leading-zero loss).
+    const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    const slug = await uniqueGallerySlug(env, parsed.data.name);
+
+    const gallery = await insertGallery(env, {
+      event_id: event.id,
+      name: parsed.data.name,
+      description: parsed.data.description ?? "",
+      slug,
+      pin,
+      created_by: actor.id,
+    });
+    const associated = await associateGalleryPhotos(env, gallery.id, event.id, photoIds);
+
+    res.status(201).json({ gallery: serializeGallery(gallery, associated) });
+  }) as unknown as import("express").RequestHandler);
+
+  router.get("/events/:id/galleries", (async (req: Request, res: Response) => {
+    const user = await resolveAppUser(env, req);
+    const event = await getWorkspaceEvent(env, String(req.params.id), user.workspace_id);
+    if (!event) {
+      res.status(404).json({ error: "Event not found" });
+      return;
+    }
+    if (user.role !== "ADMIN" && !(await isEventMember(env, event.id, user.id))) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    const galleries = await listEventGalleries(env, event.id);
+    const withCounts = await Promise.all(
+      galleries.map(async (g) =>
+        serializeGallery(g, (await listGalleryPhotoIds(env, g.id)).length)
+      )
+    );
+    res.json({ galleries: withCounts });
+  }) as unknown as import("express").RequestHandler);
+
+  /**
+   * Publish a gallery. Admin-only; the gallery must belong to the admin's
+   * workspace (checked through its event). Publishing never modifies photos.
+   */
+  router.post("/galleries/:id/publish", requireRole(env, "ADMIN"), (async (
+    req: Request,
+    res: Response
+  ) => {
+    const actor = await resolveAppUser(env, req);
+    const gallery = await getGalleryById(env, String(req.params.id));
+    if (!gallery) {
+      res.status(404).json({ error: "Gallery not found" });
+      return;
+    }
+    const event = await getWorkspaceEvent(env, gallery.event_id, actor.workspace_id);
+    if (!event) {
+      res.status(404).json({ error: "Gallery not found" });
+      return;
+    }
+    const published = await publishGallery(env, gallery.id);
+    if (!published) {
+      res.status(404).json({ error: "Gallery not found" });
+      return;
+    }
+    const photoCount = (await listGalleryPhotoIds(env, gallery.id)).length;
+    res.json({ gallery: serializeGallery(published, photoCount) });
+  }) as unknown as import("express").RequestHandler);
+
   void requireRole;
   return router;
 }
@@ -576,6 +693,21 @@ export function serializeInvitation(i: DbInvitation) {
     email: i.email,
     status: i.status,
     created_at: new Date(i.created_at).toISOString(),
+  };
+}
+
+export function serializeGallery(g: DbGallery, photoCount: number) {
+  return {
+    id: g.id,
+    event_id: g.event_id,
+    name: g.name,
+    description: g.description,
+    slug: g.slug,
+    status: g.status,
+    photo_count: photoCount,
+    pin: g.pin, // admin-facing response only; never returned by public endpoints
+    published_at: g.published_at ? new Date(g.published_at).toISOString() : null,
+    created_at: new Date(g.created_at).toISOString(),
   };
 }
 

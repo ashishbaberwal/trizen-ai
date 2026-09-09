@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { readFileSync } from "node:fs";
 import pg from "pg";
 
@@ -267,6 +268,132 @@ export async function getPhotoById(env: Env, id: string): Promise<DbPhoto | null
 export async function deletePhoto(env: Env, id: string): Promise<boolean> {
   const result = await getPool(env).query("DELETE FROM photos WHERE id = $1", [id]);
   return (result.rowCount ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Galleries (admin workflow) — a gallery belongs to one event and contains
+// only photos from that same event.
+// ---------------------------------------------------------------------------
+
+export type DbGallery = {
+  id: string;
+  event_id: string;
+  name: string;
+  description: string;
+  slug: string;
+  pin: string;
+  status: "draft" | "published";
+  published_at: Date | null;
+  created_by: string;
+  created_at: Date;
+  updated_at: Date;
+};
+
+export async function insertGallery(
+  env: Env,
+  input: {
+    event_id: string;
+    name: string;
+    description: string;
+    slug: string;
+    pin: string;
+    created_by: string;
+  }
+): Promise<DbGallery> {
+  const result = await getPool(env).query<DbGallery>(
+    `INSERT INTO galleries (event_id, name, description, slug, pin, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [input.event_id, input.name, input.description, input.slug, input.pin, input.created_by]
+  );
+  return result.rows[0]!;
+}
+
+/**
+ * Associate selected photos with a gallery. Every photo ID must belong to
+ * the gallery's event — verified by the caller via photosInEvent before
+ * calling this; the INSERT ... SELECT re-verifies in SQL as defense in depth.
+ */
+export async function associateGalleryPhotos(
+  env: Env,
+  galleryId: string,
+  eventId: string,
+  photoIds: string[]
+): Promise<number> {
+  if (photoIds.length === 0) return 0;
+  const result = await getPool(env).query(
+    `INSERT INTO gallery_photos (gallery_id, photo_id)
+     SELECT $1, id FROM photos WHERE id = ANY($2::uuid[]) AND event_id = $3
+     ON CONFLICT (gallery_id, photo_id) DO NOTHING`,
+    [galleryId, photoIds, eventId]
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function getGalleryById(env: Env, id: string): Promise<DbGallery | null> {
+  const result = await getPool(env).query<DbGallery>("SELECT * FROM galleries WHERE id = $1", [id]);
+  return result.rows[0] ?? null;
+}
+
+/** Galleries of an event, newest first (event is already workspace-scoped). */
+export async function listEventGalleries(env: Env, eventId: string): Promise<DbGallery[]> {
+  const result = await getPool(env).query<DbGallery>(
+    "SELECT * FROM galleries WHERE event_id = $1 ORDER BY created_at DESC",
+    [eventId]
+  );
+  return result.rows;
+}
+
+export async function publishGallery(env: Env, id: string): Promise<DbGallery | null> {
+  const result = await getPool(env).query<DbGallery>(
+    `UPDATE galleries
+     SET status = 'published', published_at = now(), updated_at = now()
+     WHERE id = $1 RETURNING *`,
+    [id]
+  );
+  return result.rows[0] ?? null;
+}
+
+/** Photo IDs associated with a gallery, in insertion order. */
+export async function listGalleryPhotoIds(env: Env, galleryId: string): Promise<string[]> {
+  const result = await getPool(env).query<{ photo_id: string }>(
+    "SELECT photo_id FROM gallery_photos WHERE gallery_id = $1 ORDER BY added_at ASC",
+    [galleryId]
+  );
+  return result.rows.map((r) => r.photo_id);
+}
+
+/**
+ * Count how many of the given photo IDs actually belong to the event.
+ * Used to reject cross-event photo selection before creating a gallery.
+ */
+export async function photosInEvent(
+  env: Env,
+  photoIds: string[],
+  eventId: string
+): Promise<number> {
+  const result = await getPool(env).query<{ id: string }>(
+    "SELECT id FROM photos WHERE id = ANY($1::uuid[]) AND event_id = $2",
+    [photoIds, eventId]
+  );
+  return result.rowCount ?? 0;
+}
+
+/** Derive a unique URL-safe slug from a gallery name. */
+export async function uniqueGallerySlug(env: Env, name: string): Promise<string> {
+  const base =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "gallery";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = attempt === 0 ? base : `${base}-${randomInt(1000, 9999)}`;
+    const exists = await getPool(env).query("SELECT 1 FROM galleries WHERE slug = $1", [candidate]);
+    if ((exists.rowCount ?? 0) === 0) return candidate;
+  }
+  // Practically unreachable; fall back to a random suffix.
+  return `${base}-${randomInt(100000, 999999)}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -108,6 +108,22 @@ export const api = {
     apiFetch<{ photos: PhotoApi[] }>(`/events/${eventId}/photos`, { token }),
   deletePhoto: (token: string | null, photoId: string) =>
     apiFetch<void>(`/photos/${photoId}`, { method: "DELETE", token }),
+
+  // ---- Galleries (ADMIN) ----
+  createGallery: (
+    token: string | null,
+    eventId: string,
+    input: { name: string; description?: string; photo_ids: string[] }
+  ) =>
+    apiFetch<{ gallery: GalleryApi }>(`/events/${eventId}/galleries`, {
+      method: "POST",
+      body: input,
+      token,
+    }),
+  listEventGalleries: (token: string | null, eventId: string) =>
+    apiFetch<{ galleries: GalleryApi[] }>(`/events/${eventId}/galleries`, { token }),
+  publishGallery: (token: string | null, galleryId: string) =>
+    apiFetch<{ gallery: GalleryApi }>(`/galleries/${galleryId}/publish`, { method: "POST", token }),
 };
 
 /**
@@ -186,5 +202,18 @@ export interface InvitationApi {
   id: string;
   email: string;
   status: "pending" | "accepted" | "revoked";
+  created_at: string;
+}
+
+export interface GalleryApi {
+  id: string;
+  event_id: string;
+  name: string;
+  description: string;
+  slug: string;
+  status: "draft" | "published";
+  photo_count: number;
+  pin: string;
+  published_at: string | null;
   created_at: string;
 }
