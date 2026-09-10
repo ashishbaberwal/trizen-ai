@@ -72,7 +72,7 @@ export default function EventsPage() {
           date: e.date,
           location: e.location,
           coverUrl: covers[i % covers.length],
-          photoCount: 0,
+          photoCount: e.photo_count,
           teamMemberCount: 0,
           status: e.status,
           lastActivity: e.createdAt,

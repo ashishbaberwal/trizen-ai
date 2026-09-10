@@ -155,7 +155,9 @@ export function PhotoLightbox({
 
       {photo.uploaderName && (
         <p className="pb-3 text-center text-xs text-white/60">
-          Photographed by {photo.uploaderName} · {timeAgo(photo.uploadedAt)}
+          Uploaded by {photo.uploaderName} (
+          {photo.uploaderRole === "admin" ? "Admin" : "Team member"}) ·{" "}
+          {timeAgo(photo.uploadedAt)}
         </p>
       )}
     </div>

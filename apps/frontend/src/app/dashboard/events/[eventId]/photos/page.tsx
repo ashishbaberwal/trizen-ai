@@ -14,7 +14,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 
 import { cn, formatNumber } from "@/lib/utils";
-import { api, ApiError, type PhotoApi } from "@/lib/api/client";
+import { api, ApiError, toPhoto } from "@/lib/api/client";
 import { useCurrentUserState } from "@/lib/api/use-current-user";
 import type { Photo } from "@/types";
 import { AppShell } from "@/components/dashboard/app-shell";
@@ -82,19 +82,7 @@ export default function PhotosPage() {
           .catch(() => "Event"),
       ]);
       setEventName(eventRes);
-      setPhotos(
-        data.photos.map((p: PhotoApi) => ({
-          id: p.id,
-          eventId: p.event_id,
-          url: p.url,
-          fullUrl: p.url,
-          width: 0,
-          height: 0,
-          uploaderName: "Team member", // uploader names resolve in a later pass
-          uploadedAt: p.created_at,
-          selected: false,
-        }))
-      );
+      setPhotos(data.photos.map((p) => toPhoto(p)));
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         setError("You don't have permission to view photos for this event.");
@@ -119,19 +107,7 @@ export default function PhotosPage() {
         const token = await getToken();
         const data = await api.listPhotos(token, eventId);
         if (cancelled) return;
-        setPhotos(
-          data.photos.map((p: PhotoApi) => ({
-            id: p.id,
-            eventId: p.event_id,
-            url: p.url,
-            fullUrl: p.url,
-            width: 0,
-            height: 0,
-            uploaderName: "Team member", // uploader names resolve in a later pass
-            uploadedAt: p.created_at,
-            selected: false,
-          }))
-        );
+        setPhotos(data.photos.map((p) => toPhoto(p)));
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 403) {

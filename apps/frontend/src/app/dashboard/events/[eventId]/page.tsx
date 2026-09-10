@@ -17,7 +17,7 @@ import {
 
 import { formatDate, formatNumber, timeAgo } from "@/lib/utils";
 import { galleryService, teamService } from "@/lib/services";
-import { api } from "@/lib/api/client";
+import { api, toPhoto } from "@/lib/api/client";
 import { useAuth } from "@clerk/nextjs";
 import { useCurrentUser } from "@/lib/api/use-current-user";
 import type { Event, Gallery, Photo, TeamMember } from "@/types";
@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { UploadModal } from "@/components/photos/upload-modal";
+import { PhotoCard } from "@/components/photos/photo-card";
 import { AddMemberModal } from "@/components/team/add-member-modal";
 import { EventTeamPanel } from "@/components/team/event-team-panel";
 
@@ -45,9 +46,9 @@ export default function EventDetailPage() {
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [memberOpen, setMemberOpen] = React.useState(false);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  // Refetchable so an upload can refresh photos AND the count in place.
+  const load = React.useCallback(
+    async (cancelled?: () => boolean) => {
       const token = await getToken();
       // Event + photos come from the real API. Team/galleries remain
       // mock-served until their phases wire them up.
@@ -63,7 +64,7 @@ export default function EventDetailPage() {
             location: r.event.location,
             coverUrl:
               "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&h=500&q=80",
-            photoCount: 0,
+            photoCount: r.event.photo_count,
             teamMemberCount: 0,
             status: r.event.status,
             lastActivity: r.event.createdAt,
@@ -74,32 +75,31 @@ export default function EventDetailPage() {
         galleryService.listByEvent(eventId),
         api
           .listPhotos(token, eventId)
-          .then((r) =>
-            r.photos.map((p) => ({
-              id: p.id,
-              eventId: p.event_id,
-              url: p.url,
-              fullUrl: p.url,
-              width: 0,
-              height: 0,
-              uploaderName: "Team member",
-              uploadedAt: p.created_at,
-              selected: false,
-            })) as Photo[]
-          )
+          .then((r) => r.photos.map((p) => toPhoto(p)))
           .catch(() => [] as Photo[]),
       ]);
-      if (cancelled) return;
+      if (cancelled?.()) return;
       setEvent(eventRes);
       setMembers(members);
       setGalleries(galleries);
       setPhotos(photos);
       setLoading(false);
+    },
+    [eventId, getToken]
+  );
+
+  React.useEffect(() => {
+    let isCancelled = false;
+    // Kick the load off inside an async IIFE so the effect body itself stays
+    // synchronous — setState then happens in a promise callback, never during
+    // the effect's synchronous phase.
+    void (async () => {
+      await load(() => isCancelled);
     })();
     return () => {
-      cancelled = true;
+      isCancelled = true;
     };
-  }, [eventId, getToken]);
+  }, [load]);
 
   const selectedCount = photos.filter((p) => p.selected).length;
 
@@ -276,29 +276,37 @@ export default function EventDetailPage() {
             </div>
           </TabsContent>
 
-          {/* Photos */}
+          {/* Photos — the event's own photos, shown inline. */}
           <TabsContent value="photos">
-            <div className="rounded-xl border border-dashed">
-              <EmptyState
-                icon={Images}
-                title={photos.length > 0 ? `${formatNumber(photos.length)} photos in this event` : "No photos yet"}
-                description={
-                  photos.length > 0
-                    ? "Open the photo workspace to review, select, and curate."
-                    : "Upload the first batch to get started."
-                }
-                action={{ label: "Upload photos", onClick: () => setUploadOpen(true) }}
-              />
-              {photos.length > 0 && (
-                <div className="flex justify-center pb-8">
-                  <Button asChild>
+            {photos.length === 0 ? (
+              <div className="rounded-xl border border-dashed">
+                <EmptyState
+                  icon={Images}
+                  title="No photos yet"
+                  description="Upload the first batch to get started."
+                  action={{ label: "Upload photos", onClick: () => setUploadOpen(true) }}
+                />
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-muted-foreground">
+                    {formatNumber(photos.length)}{" "}
+                    {photos.length === 1 ? "photo" : "photos"} in this event
+                  </p>
+                  <Button asChild size="sm" variant="outline">
                     <Link href={`/dashboard/events/${event.id}/photos`}>
-                      Open photo workspace <CheckCircle2 className="size-4" />
+                      Curate in photo workspace <CheckCircle2 className="size-4" />
                     </Link>
                   </Button>
                 </div>
-              )}
-            </div>
+                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                  {photos.map((photo) => (
+                    <PhotoCard key={photo.id} photo={photo} selected={false} />
+                  ))}
+                </div>
+              </>
+            )}
           </TabsContent>
 
           {/* Team */}
@@ -343,8 +351,8 @@ export default function EventDetailPage() {
         onOpenChange={setUploadOpen}
         eventId={eventId}
         onUploaded={() => {
-          // Refresh the photo count in the overview after an upload.
-          window.location.reload();
+          // Refetch photos and the event count in place — no full page reload.
+          void load();
         }}
       />
       <AddMemberModal open={memberOpen} onOpenChange={setMemberOpen} eventId={event.id} />

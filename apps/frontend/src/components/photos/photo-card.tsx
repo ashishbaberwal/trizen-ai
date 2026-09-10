@@ -74,6 +74,10 @@ export function PhotoCard({ photo, selected, onToggle }: PhotoCardProps) {
         <p className="flex items-center gap-1 text-[11px] font-medium text-white">
           <User className="size-3" aria-hidden="true" />
           {photo.uploaderName}
+          <span className="text-white/60">·</span>
+          <span className="text-white/80">
+            {photo.uploaderRole === "admin" ? "Admin" : "Team member"}
+          </span>
         </p>
         <p className="text-[10px] text-white/75">{timeAgo(photo.uploadedAt)}</p>
       </div>
