@@ -29,6 +29,38 @@ function buildUrl(path: string): string {
   return `${API_URL}/api/v1${path}`;
 }
 
+/** How long to wait for Clerk to produce a session token before giving up. */
+const TOKEN_TIMEOUT_MS = 15_000;
+
+/**
+ * Bounded Clerk session-token fetch.
+ *
+ * Clerk's `getToken()` can stay PENDING while its session is still loading or
+ * mid-refresh. An unbounded `await` there never resolves and never rejects, so
+ * the caller's spinner hangs forever and no request is ever sent — the exact
+ * "stuck at 0%" symptom. We cap the wait, retry once for a refresh in flight,
+ * then fail with an actionable message instead of hanging.
+ */
+export async function getSessionToken(getToken: () => Promise<string | null>): Promise<string> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const token = await Promise.race([
+      // A rejected getToken() (refresh failure) is a null result, not a crash.
+      getToken().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), TOKEN_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+
+    if (token) return token;
+    // Only a refresh already in flight is worth a retry; wait a beat for it.
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(
+    "Your session has ended or could not be verified. Please sign in again, then retry the upload."
+  );
+}
+
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, token } = options;
 
@@ -142,6 +174,8 @@ export function uploadPhotos(
     xhr.open("POST", `${API_URL}/api/v1/events/${eventId}/photos`);
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.responseType = "json";
+    // No request ever hangs forever — 120s ceiling.
+    xhr.timeout = 120_000;
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {

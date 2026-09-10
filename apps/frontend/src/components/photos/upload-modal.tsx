@@ -13,7 +13,7 @@ import { toast } from "sonner";
 
 import { cn, formatFileSize } from "@/lib/utils";
 import { useAuth } from "@clerk/nextjs";
-import { uploadPhotos } from "@/lib/api/client";
+import { getSessionToken, uploadPhotos } from "@/lib/api/client";
 import type { UploadItem } from "@/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,7 +52,7 @@ function makeItems(files: File[]): UploadItem[] {
  * actual XHR upload event — nothing is simulated.
  */
 export function UploadModal({ open, onOpenChange, eventId, onUploaded }: UploadModalProps) {
-  const { getToken } = useAuth();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [items, setItems] = React.useState<UploadItem[]>([]);
   const [dragOver, setDragOver] = React.useState(false);
   const [phase, setPhase] = React.useState<"idle" | "uploading" | "done">("idle");
@@ -118,7 +118,16 @@ export function UploadModal({ open, onOpenChange, eventId, onUploaded }: UploadM
       )
     );
     try {
-      const token = await getToken();
+      // Never wait on Clerk while it's still loading — that promise can stay
+      // pending indefinitely and strand the upload at 0% with no request sent.
+      if (!isLoaded) {
+        throw new Error("Still finishing sign-in. Give it a moment, then retry the upload.");
+      }
+      if (!isSignedIn) {
+        throw new Error("Your session has ended. Please sign in again, then retry the upload.");
+      }
+      // Bounded fetch: fails fast if the session can't produce a token.
+      const token = await getSessionToken(getToken);
       // Backend currently accepts the whole batch; track aggregate progress.
       await uploadPhotos(token, eventId, pending.map((p) => p.file), (percent) => {
         setItems((prev) =>
