@@ -422,7 +422,12 @@ export default function EventDetailPage() {
           void load();
         }}
       />
-      <AddMemberModal open={memberOpen} onOpenChange={setMemberOpen} eventId={event.id} />
+      <AddMemberModal
+        open={memberOpen}
+        onOpenChange={setMemberOpen}
+        eventId={event.id}
+        onInvited={() => void load()}
+      />
 
       {/* Gallery wizard lives here too, so publishing from this page shows up
           in the Galleries tab without a trip to the photo workspace. */}

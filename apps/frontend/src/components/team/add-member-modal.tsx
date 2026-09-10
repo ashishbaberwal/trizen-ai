@@ -4,10 +4,12 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Loader2, Mail } from "lucide-react";
+import { AlertCircle, Loader2, Mail } from "lucide-react";
 import { toast } from "sonner";
 
-import { teamService } from "@/lib/services";
+import { useAuth } from "@clerk/nextjs";
+
+import { api, ApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -38,13 +40,22 @@ type AddMemberValues = z.infer<typeof addMemberSchema>;
 export function AddMemberModal({
   open,
   onOpenChange,
-  eventId,
+  onInvited,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  eventId: string;
+  /**
+   * Kept by callers for context, but invitations are workspace-level: the
+   * backend stamps workspace_id from the authenticated admin, so no event id
+   * is sent. Add the member to a specific event via the event team panel.
+   */
+  eventId?: string;
+  /** Called after a successful invite so the parent can refresh its list. */
+  onInvited?: () => void;
 }) {
+  const { getToken } = useAuth();
   const [role, setRole] = React.useState<"admin" | "member">("member");
+  const [serverError, setServerError] = React.useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -57,11 +68,29 @@ export function AddMemberModal({
   });
 
   async function onSubmit(values: AddMemberValues) {
-    await teamService.addMember({ ...values, eventId });
-    toast.success("Member added", { description: `${values.name} can now upload to this event.` });
-    reset();
-    setRole("member");
-    onOpenChange(false);
+    setServerError(null);
+    try {
+      const token = await getToken();
+      // Real invitation: creates the workspace member + Clerk invite. This
+      // modal previously wrote to an in-memory mock store, so it reported
+      // success while persisting nothing.
+      await api.inviteMember(token, { name: values.name, email: values.email });
+      toast.success("Invitation sent", {
+        description: `${values.name} will join this workspace once they accept.`,
+      });
+      reset();
+      setRole("member");
+      onOpenChange(false);
+      onInvited?.();
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.status === 403
+            ? "You don't have permission to invite members."
+            : err.message
+          : "Unable to send the invitation. Please try again.";
+      setServerError(message);
+    }
   }
 
   return (
@@ -124,6 +153,11 @@ export function AddMemberModal({
               </SelectContent>
             </Select>
           </div>
+          {serverError && (
+            <p className="flex items-center gap-1.5 text-xs text-destructive" role="alert">
+              <AlertCircle className="size-3.5" /> {serverError}
+            </p>
+          )}
           <DialogFooter className="mt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
