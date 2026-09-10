@@ -29,6 +29,44 @@ function buildUrl(path: string): string {
   return `${API_URL}/api/v1${path}`;
 }
 
+/** How long to wait for Clerk to produce a session token before giving up. */
+const TOKEN_TIMEOUT_MS = 15_000;
+
+/**
+ * Bounded Clerk session-token fetch.
+ *
+ * Clerk's `getToken()` can stay PENDING while its session is still loading or
+ * mid-refresh. An unbounded `await` there never resolves and never rejects, so
+ * the caller's spinner hangs forever and no request is ever sent — the exact
+ * "stuck at 0%" symptom. We cap the wait, then retry once against a fresh
+ * (uncached) token, then fail with an actionable message instead of hanging.
+ *
+ * The retry passes `skipCache` because the usual cause of a null/expired token
+ * mid-flow is a cached token that has just passed its ~60s lifetime; asking the
+ * cache again returns the same stale value.
+ */
+export async function getSessionToken(
+  getToken: (options?: { skipCache?: boolean }) => Promise<string | null>
+): Promise<string> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const token = await Promise.race([
+      // A rejected getToken() (refresh failure) is a null result, not a crash.
+      getToken(attempt > 0 ? { skipCache: true } : undefined).catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), TOKEN_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+
+    if (token) return token;
+    // The token may be mid-refresh; give it a beat before forcing a fresh read.
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(
+    "Your session has ended or could not be verified. Please sign in again, then retry the upload."
+  );
+}
+
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, token } = options;
 
@@ -142,6 +180,8 @@ export function uploadPhotos(
     xhr.open("POST", `${API_URL}/api/v1/events/${eventId}/photos`);
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.responseType = "json";
+    // No request ever hangs forever — 120s ceiling.
+    xhr.timeout = 120_000;
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {
@@ -153,6 +193,9 @@ export function uploadPhotos(
       const body = xhr.response ?? {};
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(body as { photos: PhotoApi[] });
+      } else if (xhr.status === 401 || xhr.status === 403) {
+        // Distinct type so the caller can refresh the token and retry.
+        reject(new UnauthorizedError(body.error ?? "Your session was rejected. Please try again."));
       } else {
         reject(new ApiError(xhr.status, body.error ?? `Upload failed (${xhr.status})`));
       }
@@ -164,6 +207,39 @@ export function uploadPhotos(
     for (const file of files) form.append("photos", file);
     xhr.send(form);
   });
+}
+
+/** A 401/403 means the session token was rejected — usually it expired mid-upload. */
+export class UnauthorizedError extends ApiError {
+  constructor(message: string) {
+    super(401, message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+/**
+ * Upload with one automatic re-authentication.
+ *
+ * A 60s dev-instance session token can expire while a large batch is still
+ * uploading, which surfaced as a bare "Unauthorized" failure and a dead
+ * spinner. When the backend rejects the token, fetch a fresh one (skipping the
+ * cache) and retry the batch exactly once.
+ */
+export async function uploadPhotosWithRetry(
+  getToken: (options?: { skipCache?: boolean }) => Promise<string | null>,
+  eventId: string,
+  files: File[],
+  onProgress?: (percent: number) => void
+): Promise<{ photos: PhotoApi[] }> {
+  const token = await getSessionToken(getToken);
+  try {
+    return await uploadPhotos(token, eventId, files, onProgress);
+  } catch (err) {
+    if (!(err instanceof UnauthorizedError)) throw err;
+    // The token was rejected — force a fresh one and try the batch once more.
+    const fresh = await getSessionToken(() => getToken({ skipCache: true }));
+    return uploadPhotos(fresh, eventId, files, onProgress);
+  }
 }
 
 export interface PhotoApi {
