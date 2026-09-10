@@ -95,7 +95,12 @@ export function UploadModal({ open, onOpenChange, eventId, onUploaded }: UploadM
     return () => clearTimeout(t);
   }, [open]);
 
-  const uploading = items.some((i) => i.status === "uploading" || i.status === "queued");
+  // "queued" means waiting to start, NOT in flight. Counting it here disabled
+  // the Upload button the instant files were added — which also swapped the
+  // label to "Uploading…" — so startUpload() could never run and the modal
+  // appeared to hang at 0% forever with no request ever sent.
+  const uploading = items.some((i) => i.status === "uploading");
+  const pendingCount = items.filter((i) => i.status === "queued" || i.status === "failed").length;
   const uploadedCount = items.filter((i) => i.status === "uploaded").length;
   const failedItems = items.filter((i) => i.status === "failed");
 
@@ -107,9 +112,9 @@ export function UploadModal({ open, onOpenChange, eventId, onUploaded }: UploadM
     );
   }
 
-  async function startUpload() {
+  async function startUpload(source: UploadItem[] = items) {
     setServerError(null);
-    const pending = items.filter((i) => i.status === "queued" || i.status === "failed");
+    const pending = source.filter((i) => i.status === "queued" || i.status === "failed");
     if (pending.length === 0) return;
     setPhase("uploading");
     setItems((prev) =>
@@ -157,10 +162,16 @@ export function UploadModal({ open, onOpenChange, eventId, onUploaded }: UploadM
   }
 
   function retry() {
-    setItems((prev) =>
-      prev.map((it) => (it.status === "failed" ? { ...it, status: "queued", progress: 0, error: undefined } : it))
-    );
-    void startUpload();
+    // startUpload() reads `items`, which is still the pre-update array here —
+    // resetting first and starting from the new value keeps the retry from
+    // silently finding nothing pending.
+    setItems((prev) => {
+      const reset = prev.map((it) =>
+        it.status === "failed" ? { ...it, status: "queued" as const, progress: 0, error: undefined } : it
+      );
+      void startUpload(reset);
+      return reset;
+    });
   }
 
   return (
@@ -282,8 +293,8 @@ export function UploadModal({ open, onOpenChange, eventId, onUploaded }: UploadM
             {phase === "done" ? "Close" : "Cancel"}
           </Button>
           <Button
-            disabled={uploading || items.length === 0 || phase === "uploading"}
-            onClick={startUpload}
+            disabled={uploading || pendingCount === 0}
+            onClick={() => void startUpload()}
           >
             {uploading ? (
               <>
@@ -293,8 +304,8 @@ export function UploadModal({ open, onOpenChange, eventId, onUploaded }: UploadM
               <>
                 <CheckCircle2 /> Uploaded {uploadedCount}
               </>
-            ) : items.length > 0 ? (
-              `Upload ${items.length} photo${items.length === 1 ? "" : "s"}`
+            ) : pendingCount > 0 ? (
+              `Upload ${pendingCount} photo${pendingCount === 1 ? "" : "s"}`
             ) : (
               "Upload photos"
             )}
