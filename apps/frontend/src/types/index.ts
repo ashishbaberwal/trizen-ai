@@ -44,7 +44,10 @@ export interface Photo {
   fullUrl: string;
   width: number;
   height: number;
+  /** Display name of whoever uploaded it, from the API. */
   uploaderName: string;
+  /** Their app role, so the photo can be tagged "Admin" or "Team member". */
+  uploaderRole: "admin" | "member";
   uploadedAt: string;
   selected: boolean;
   favorite?: boolean;

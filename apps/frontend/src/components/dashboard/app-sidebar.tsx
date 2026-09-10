@@ -6,7 +6,6 @@ import {
   Images,
   LayoutDashboard,
   UserRound,
-  UploadCloud,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 
@@ -18,7 +17,11 @@ import { SidebarInner } from "@/components/dashboard/sidebar-inner";
 /**
  * Role-aware navigation.
  * - ADMIN: Overview / Events / Galleries / Team
- * - TEAM_MEMBER: My Events / My Uploads
+ * - TEAM_MEMBER: My Events
+ *
+ * "My Uploads" used to point at /dashboard/uploads, which has no page — it
+ * 404'd for every member. Removed until that page actually exists; a per-user
+ * uploads view is still open work, not a dead link.
  *
  * Nav visibility is UX only — every admin action is enforced server-side.
  */
@@ -31,7 +34,6 @@ const adminNav: NavItem[] = [
 
 const memberNav: NavItem[] = [
   { label: "My Events", href: "/dashboard", icon: FolderClosed },
-  { label: "My Uploads", href: "/dashboard/uploads", icon: UploadCloud },
 ];
 
 interface NavItem {

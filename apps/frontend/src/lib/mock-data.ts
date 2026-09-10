@@ -176,6 +176,8 @@ function generatePhotos(eventId: string, count: number, startIndex: number): Pho
       width: w,
       height: h,
       uploaderName: uploaders[(i + startIndex) % uploaders.length],
+      // Demo data spans both roles so the tag renders either way.
+      uploaderRole: (i + startIndex) % 4 === 0 ? "admin" : "member",
       uploadedAt: uploadedAt.toISOString(),
       selected: (i * 5 + startIndex) % 7 === 0,
     });

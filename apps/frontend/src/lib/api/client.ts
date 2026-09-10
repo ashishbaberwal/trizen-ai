@@ -6,6 +6,8 @@
  * verify identity server-side — the client never sends a trusted user ID.
  */
 
+import type { Photo } from "@/types";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export class ApiError extends Error {
@@ -246,11 +248,39 @@ export interface PhotoApi {
   id: string;
   event_id: string;
   uploaded_by: string;
+  /** Uploader display name, joined server-side (null on upload inserts). */
+  uploader_name: string | null;
+  /** Uploader app role, joined server-side (null on upload inserts). */
+  uploader_role: "ADMIN" | "TEAM_MEMBER" | null;
   filename: string;
   mime_type: string;
   file_size: number;
   url: string;
   created_at: string;
+}
+
+/**
+ * Single mapping point from the API photo shape to the UI `Photo` shape.
+ *
+ * Previously each page mapped this inline and hardcoded `"Team member"` for
+ * the uploader and dropped the role entirely, so every photo was mislabelled
+ * regardless of who uploaded it. Keep this the only place that translates.
+ */
+export function toPhoto(p: PhotoApi): Photo {
+  return {
+    id: p.id,
+    eventId: p.event_id,
+    url: p.url,
+    fullUrl: p.url,
+    width: 0,
+    height: 0,
+    // The API joins the uploader and falls back to their email server-side, so
+    // this is only blank if the user row is genuinely gone.
+    uploaderName: p.uploader_name || "Former member",
+    uploaderRole: p.uploader_role === "ADMIN" ? "admin" : "member",
+    uploadedAt: p.created_at,
+    selected: false,
+  };
 }
 
 export interface TeamMemberApi {
@@ -271,6 +301,8 @@ export interface EventApi {
   location: string;
   date: string;
   status: "draft" | "active" | "completed";
+  /** Number of photos on this event, counted server-side. */
+  photo_count: number;
   createdAt: string;
 }
 
