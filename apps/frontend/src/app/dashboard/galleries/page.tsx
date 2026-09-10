@@ -69,7 +69,7 @@ export default function GalleriesPage() {
           name: g.name,
           description: g.description,
           coverUrl:
-            "https://images.unsplash.com/photo-1450388940901-a4598e4b87c8?auto=format&fit=crop&w=800&h=450&q=80",
+            "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&h=450&q=80",
           photoCount: g.photo_count,
           status: g.status,
           createdAt: g.created_at,

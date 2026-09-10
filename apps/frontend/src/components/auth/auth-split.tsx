@@ -1,5 +1,4 @@
 import Image from "next/image";
-import Link from "next/link";
 
 import { Logo } from "@/components/logo";
 
@@ -8,12 +7,9 @@ export function AuthSplit({ children }: { children: React.ReactNode }) {
     <div className="grid min-h-dvh lg:grid-cols-2">
       {/* Form side */}
       <div className="flex flex-col px-6 py-8 sm:px-12 lg:px-16">
-        <Link
-          href="/"
-          className="inline-flex w-fit rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
+        <div className="inline-flex w-fit rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <Logo />
-        </Link>
+        </div>
         <div className="flex flex-1 items-center justify-center py-10">
           <div className="w-full max-w-sm">{children}</div>
         </div>
@@ -25,8 +21,8 @@ export function AuthSplit({ children }: { children: React.ReactNode }) {
       {/* Visual side */}
       <div className="relative hidden overflow-hidden lg:block">
         <Image
-          src="https://images.unsplash.com/photo-1450388940901-a4598e4b87c8?auto=format&fit=crop&w=1400&q=80"
-          alt="A photographer reviewing images at golden hour"
+          src="https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1400&q=80"
+          alt="A photographer capturing moments at golden hour"
           fill
           sizes="50vw"
           className="object-cover"
