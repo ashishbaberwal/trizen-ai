@@ -14,6 +14,15 @@ node_modules
 
 # Testing
 coverage
+.playwright-cli/
+apps/backend/.playwright-cli/
+
+# Local agent and one-off diagnostic artifacts
+.mcp.json
+.claude/settings.local.json
+.claude/worktrees/
+apps/backend/scripts/diag-browser-flow.cjs
+apps/backend/scripts/diag-real-upload.cjs
 
 # Turbo
 .turbo
