@@ -13,11 +13,13 @@ import {
   Sparkles,
   ArrowLeft,
   CheckCircle2,
+  Copy,
+  ExternalLink,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { formatDate, formatNumber, timeAgo } from "@/lib/utils";
-import { galleryService, teamService } from "@/lib/services";
-import { api, toPhoto } from "@/lib/api/client";
+import { api, toGallery, toPhoto, toTeamMember } from "@/lib/api/client";
 import { useAuth } from "@clerk/nextjs";
 import { useCurrentUser } from "@/lib/api/use-current-user";
 import type { Event, Gallery, Photo, TeamMember } from "@/types";
@@ -30,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { UploadModal } from "@/components/photos/upload-modal";
 import { PhotoCard } from "@/components/photos/photo-card";
+import { CreateGalleryWizard } from "@/components/galleries/create-gallery-wizard";
 import { AddMemberModal } from "@/components/team/add-member-modal";
 import { EventTeamPanel } from "@/components/team/event-team-panel";
 
@@ -37,6 +40,7 @@ export default function EventDetailPage() {
   const params = useParams<{ eventId: string }>();
   const eventId = params.eventId;
   const user = useCurrentUser();
+  const isAdmin = user?.role === "admin";
   const { getToken } = useAuth();
   const [loading, setLoading] = React.useState(true);
   const [event, setEvent] = React.useState<Event | null>(null);
@@ -45,14 +49,16 @@ export default function EventDetailPage() {
   const [photos, setPhotos] = React.useState<Photo[]>([]);
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [memberOpen, setMemberOpen] = React.useState(false);
+  const [wizardOpen, setWizardOpen] = React.useState(false);
 
   // Refetchable so an upload can refresh photos AND the count in place.
   const load = React.useCallback(
     async (cancelled?: () => boolean) => {
       const token = await getToken();
-      // Event + photos come from the real API. Team/galleries remain
-      // mock-served until their phases wire them up.
-      const [eventRes, members, galleries, photos] = await Promise.all([
+      // Everything on this page comes from the real API — team members and
+      // galleries used to be served from an in-memory mock store, so created
+      // galleries never appeared and counts were always empty.
+      const [eventRes, membersRes, galleriesRes, photosRes] = await Promise.all([
         api
           .getEvent(token, eventId)
           .then((r) => ({
@@ -71,8 +77,20 @@ export default function EventDetailPage() {
             createdAt: r.event.createdAt,
           }))
           .catch(() => null),
-        teamService.listByEvent(eventId),
-        galleryService.listByEvent(eventId),
+        api
+          .listEventMembers(token, eventId)
+          .then((r) => r.members.map(toTeamMember))
+          // 404/403 here means no access to this event, not "no members" —
+          // leave the list empty but let the event fetch surface the problem.
+          .catch(() => [] as TeamMember[]),
+        api
+          .listEventGalleries(token, eventId)
+          .then((r) =>
+            r.galleries.map((g) =>
+              toGallery(g, "", typeof window !== "undefined" ? window.location.origin : "")
+            )
+          )
+          .catch(() => [] as Gallery[]),
         api
           .listPhotos(token, eventId)
           .then((r) => r.photos.map((p) => toPhoto(p)))
@@ -80,9 +98,9 @@ export default function EventDetailPage() {
       ]);
       if (cancelled?.()) return;
       setEvent(eventRes);
-      setMembers(members);
-      setGalleries(galleries);
-      setPhotos(photos);
+      setMembers(membersRes);
+      setGalleries(galleriesRes);
+      setPhotos(photosRes);
       setLoading(false);
     },
     [eventId, getToken]
@@ -140,12 +158,8 @@ export default function EventDetailPage() {
     <AppShell
       title={event.name}
       crumbs={crumbs}
-      actions={
-        <Button size="sm" onClick={() => setUploadOpen(true)}>
-          <Upload /> <span className="hidden sm:inline">Upload photos</span>
-          <span className="sm:hidden">Upload</span>
-        </Button>
-      }
+      // No header action: "Upload photos" lives in the actions row below the
+      // banner, and duplicating it here was confusing.
     >
       <div className="animate-fade-up">
         {/* Banner */}
@@ -182,10 +196,8 @@ export default function EventDetailPage() {
           <Button variant="outline" onClick={() => setMemberOpen(true)}>
             <UserPlus /> Manage team
           </Button>
-          <Button variant="outline" asChild>
-            <Link href={`/dashboard/events/${event.id}/photos?createGallery=1`}>
-              <Sparkles /> Create gallery
-            </Link>
+          <Button variant="outline" onClick={() => setWizardOpen(true)}>
+            <Sparkles /> Create gallery
           </Button>
         </div>
 
@@ -246,25 +258,34 @@ export default function EventDetailPage() {
               <div className="rounded-xl border bg-card">
                 <h2 className="border-b px-5 py-3.5 font-display text-sm font-semibold">Latest galleries</h2>
                 {galleries.length === 0 ? (
+                  // No action here — "Create gallery" is a separate button
+                  // above; this panel is informational only.
                   <EmptyState
                     icon={Images}
                     title="No galleries yet"
                     description="Select photos and publish your first client gallery."
-                    action={{ label: "Create gallery", href: `/dashboard/events/${event.id}/photos?createGallery=1` }}
                     className="py-10"
                   />
                 ) : (
                   <ul className="divide-y">
                     {galleries.slice(0, 4).map((g) => (
                       <li key={g.id} className="flex items-center gap-3 px-5 py-3">
+                        {/* Galleries store no cover; show an event photo. */}
                         <div className="relative size-12 shrink-0 overflow-hidden rounded-md bg-secondary">
-                          <Image src={g.coverUrl} alt="" fill sizes="48px" className="object-cover" />
+                          {photos[0] ? (
+                            <Image src={photos[0].url} alt="" fill sizes="48px" className="object-cover" />
+                          ) : (
+                            <span className="flex size-full items-center justify-center">
+                              <Images className="size-4 text-muted-foreground" />
+                            </span>
+                          )}
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium">{g.name}</p>
                           <p className="text-xs text-muted-foreground">
-                            {g.photoCount} photos
-                            {g.publishedAt ? ` · Published ${formatDate(g.publishedAt)}` : " · Draft"}
+                            {formatNumber(g.photoCount)}{" "}
+                            {g.photoCount === 1 ? "photo" : "photos"} · PIN{" "}
+                            <span className="font-mono tabular-nums tracking-wider">{g.pin}</span>
                           </p>
                         </div>
                         <GalleryStatusBadge status={g.status} />
@@ -314,29 +335,75 @@ export default function EventDetailPage() {
             <EventTeamPanel eventId={event.id} isAdmin={user?.role === "admin"} />
           </TabsContent>
 
-          {/* Galleries */}
+          {/* Galleries — every gallery for this event, with its share link and PIN */}
           <TabsContent value="galleries">
             {galleries.length === 0 ? (
+              // Informational only — "Create gallery" is a button above.
               <EmptyState
                 icon={Images}
                 title="No galleries yet"
                 description="Select photos and publish your first client gallery."
-                action={{ label: "Create gallery", href: `/dashboard/events/${event.id}/photos?createGallery=1` }}
                 className="rounded-xl border border-dashed"
               />
             ) : (
               <ul className="grid gap-4 sm:grid-cols-2">
                 {galleries.map((g) => (
-                  <li key={g.id} className="overflow-hidden rounded-xl border bg-card">
-                    <div className="relative aspect-[16/9] bg-secondary">
-                      <Image src={g.coverUrl} alt="" fill sizes="(max-width: 640px) 100vw, 500px" className="object-cover" />
-                    </div>
-                    <div className="flex items-center justify-between p-4">
+                  <li key={g.id} className="rounded-xl border bg-card p-4">
+                    <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate font-medium">{g.name}</p>
-                        <p className="text-xs text-muted-foreground">{g.photoCount} photos</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatNumber(g.photoCount)}{" "}
+                          {g.photoCount === 1 ? "photo" : "photos"}
+                          {g.publishedAt
+                            ? ` · Published ${formatDate(g.publishedAt)}`
+                            : " · Draft"}
+                        </p>
                       </div>
                       <GalleryStatusBadge status={g.status} />
+                    </div>
+
+                    {/* PIN — the client needs this to open the gallery. */}
+                    <div className="mt-3 flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">PIN</span>
+                      <code className="rounded bg-secondary px-2 py-0.5 font-mono text-sm tabular-nums tracking-widest">
+                        {g.pin}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Copy PIN for ${g.name}`}
+                        onClick={() => {
+                          void navigator.clipboard
+                            ?.writeText(g.pin)
+                            .then(() => toast.success("PIN copied"))
+                            .catch(() => toast.error("Couldn't copy PIN"));
+                        }}
+                      >
+                        <Copy className="size-3.5" /> Copy
+                      </Button>
+                    </div>
+
+                    {/* Public gallery link */}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" asChild>
+                        <a href={g.url} target="_blank" rel="noreferrer">
+                          Open gallery <ExternalLink className="size-3.5" />
+                        </a>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Copy link for ${g.name}`}
+                        onClick={() => {
+                          void navigator.clipboard
+                            ?.writeText(g.url)
+                            .then(() => toast.success("Link copied"))
+                            .catch(() => toast.error("Couldn't copy link"));
+                        }}
+                      >
+                        <Copy className="size-3.5" /> Copy link
+                      </Button>
                     </div>
                   </li>
                 ))}
@@ -356,6 +423,19 @@ export default function EventDetailPage() {
         }}
       />
       <AddMemberModal open={memberOpen} onOpenChange={setMemberOpen} eventId={event.id} />
+
+      {/* Gallery wizard lives here too, so publishing from this page shows up
+          in the Galleries tab without a trip to the photo workspace. */}
+      {isAdmin && (
+        <CreateGalleryWizard
+          open={wizardOpen}
+          onOpenChange={setWizardOpen}
+          eventId={event.id}
+          eventName={event.name}
+          photos={photos}
+          onPublished={() => void load()}
+        />
+      )}
     </AppShell>
   );
 }

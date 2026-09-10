@@ -42,6 +42,8 @@ interface CreateGalleryWizardProps {
   eventId: string;
   eventName: string;
   photos: Photo[];
+  /** Called after a gallery is published so the parent can refetch its list. */
+  onPublished?: () => void;
 }
 
 const STEPS = ["Photos", "Settings", "Review"] as const;
@@ -60,6 +62,7 @@ export function CreateGalleryWizard({
   eventId,
   eventName,
   photos,
+  onPublished,
 }: CreateGalleryWizardProps) {
   const router = useRouter();
   const { getToken } = useAuth();
@@ -105,6 +108,9 @@ export function CreateGalleryWizard({
       setPublished(publishedGallery);
       toast.success("Gallery published", { description: gallery.name });
       router.refresh();
+      // These pages fetch client-side, so router.refresh() alone won't re-read
+      // the list — let the parent refetch so the new gallery shows immediately.
+      onPublished?.();
     } catch (err) {
       const message =
         err instanceof ApiError

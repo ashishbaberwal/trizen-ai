@@ -6,7 +6,7 @@
  * verify identity server-side — the client never sends a trusted user ID.
  */
 
-import type { Photo } from "@/types";
+import type { Gallery, Photo, TeamMember } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -280,6 +280,44 @@ export function toPhoto(p: PhotoApi): Photo {
     uploaderRole: p.uploader_role === "ADMIN" ? "admin" : "member",
     uploadedAt: p.created_at,
     selected: false,
+  };
+}
+
+/**
+ * Maps an API gallery to the UI shape. `origin` is passed in because the
+ * public link is built client-side, where window.location is available.
+ */
+export function toGallery(g: GalleryApi, eventName: string, origin = ""): Gallery {
+  return {
+    id: g.id,
+    slug: g.slug,
+    eventId: g.event_id,
+    eventName,
+    name: g.name,
+    description: g.description,
+    // Galleries have no stored cover; the event's photos are the visual.
+    coverUrl: "",
+    photoCount: g.photo_count,
+    status: g.status,
+    createdAt: g.created_at,
+    publishedAt: g.published_at ?? undefined,
+    pin: g.pin,
+    url: `${origin}/gallery/${g.slug}`,
+    downloadEnabled: true,
+  };
+}
+
+/** Maps an event team member from the API to the UI shape. */
+export function toTeamMember(m: TeamMemberApi): TeamMember {
+  return {
+    id: m.id,
+    eventId: "",
+    userId: m.clerk_user_id,
+    name: m.name || m.email,
+    email: m.email,
+    role: m.role === "ADMIN" ? "admin" : "member",
+    photosUploaded: 0,
+    joinedAt: m.added_at ?? m.created_at,
   };
 }
 
