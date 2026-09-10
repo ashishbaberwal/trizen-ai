@@ -683,6 +683,8 @@ export function serializeEvent(e: DbEvent) {
     location: e.location,
     date: e.event_date,
     status: e.status,
+    // Derived by the query (COUNT over photos) — the UI shows this directly.
+    photo_count: Number(e.photo_count ?? 0),
     createdAt: new Date(e.created_at).toISOString(),
   };
 }
@@ -716,6 +718,10 @@ export function serializePhoto(p: DbPhoto, appwriteEnv: Env) {
     id: p.id,
     event_id: p.event_id,
     uploaded_by: p.uploaded_by,
+    // Attribution for the UI. uploader_* are present on list reads (joined in
+    // SQL); on upload-insert they may be absent, so the client falls back.
+    uploader_name: p.uploader_name ?? null,
+    uploader_role: p.uploader_role ?? null,
     filename: p.filename,
     mime_type: p.mime_type,
     file_size: p.file_size,

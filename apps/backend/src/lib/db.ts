@@ -34,6 +34,11 @@ export type DbEvent = {
   created_by: string;
   created_at: Date;
   updated_at: Date;
+  /**
+   * Derived, not stored: COUNT of photos for this event. Every event query
+   * below selects it so the UI never has to guess or hardcode a count.
+   */
+  photo_count: string | number;
 };
 
 export type DbEventMember = {
@@ -229,6 +234,10 @@ export type DbPhoto = {
   file_size: number;
   created_at: Date;
   updated_at: Date;
+  /** Present on reads that join users — the uploader's display name. */
+  uploader_name?: string | null;
+  /** Present on reads that join users — the uploader's app role. */
+  uploader_role?: "ADMIN" | "TEAM_MEMBER" | null;
 };
 
 export async function insertPhoto(
@@ -242,10 +251,19 @@ export async function insertPhoto(
     file_size: number;
   }
 ): Promise<DbPhoto> {
+  // Return the uploader's attribution alongside the new row so the upload
+  // response is immediately renderable without a second round trip.
   const result = await getPool(env).query<DbPhoto>(
-    `INSERT INTO photos (event_id, uploaded_by, filename, storage_file_id, mime_type, file_size)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING *`,
+    `WITH inserted AS (
+       INSERT INTO photos (event_id, uploaded_by, filename, storage_file_id, mime_type, file_size)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *
+     )
+     SELECT i.*,
+            COALESCE(NULLIF(u.name, ''), u.email) AS uploader_name,
+            u.role AS uploader_role
+     FROM inserted i
+     LEFT JOIN users u ON u.id = i.uploaded_by`,
     [input.event_id, input.uploaded_by, input.filename, input.storage_file_id, input.mime_type, input.file_size]
   );
   return result.rows[0]!;
@@ -253,8 +271,17 @@ export async function insertPhoto(
 
 /** All photos of an event, newest first (scoped by event_id — never global). */
 export async function listEventPhotos(env: Env, eventId: string): Promise<DbPhoto[]> {
+  // Join the uploader so the UI can attribute each photo. LEFT JOIN keeps the
+  // photo visible even if the user row were ever missing. COALESCE falls back
+  // to the email because accounts created without a display name have name=''.
   const result = await getPool(env).query<DbPhoto>(
-    "SELECT * FROM photos WHERE event_id = $1 ORDER BY created_at DESC",
+    `SELECT p.*,
+            COALESCE(NULLIF(u.name, ''), u.email) AS uploader_name,
+            u.role AS uploader_role
+     FROM photos p
+     LEFT JOIN users u ON u.id = p.uploaded_by
+     WHERE p.event_id = $1
+     ORDER BY p.created_at DESC`,
     [eventId]
   );
   return result.rows;
@@ -525,9 +552,13 @@ export async function createEvent(
 }
 
 /** All events in a workspace, newest first. */
+/** Every event read selects photo_count so the UI never hardcodes a count. */
+const EVENT_COLUMNS = `e.*, (SELECT COUNT(*) FROM photos p WHERE p.event_id = e.id) AS photo_count`;
+
 export async function listWorkspaceEvents(env: Env, workspaceId: string): Promise<DbEvent[]> {
   const result = await getPool(env).query<DbEvent>(
-    "SELECT * FROM events WHERE workspace_id = $1 ORDER BY created_at DESC",
+    `SELECT ${EVENT_COLUMNS} FROM events e
+     WHERE e.workspace_id = $1 ORDER BY e.created_at DESC`,
     [workspaceId]
   );
   return result.rows;
@@ -539,7 +570,7 @@ export async function listEventsForUser(env: Env, user: DbUser): Promise<DbEvent
     return listWorkspaceEvents(env, user.workspace_id);
   }
   const result = await getPool(env).query<DbEvent>(
-    `SELECT e.* FROM events e
+    `SELECT ${EVENT_COLUMNS} FROM events e
      JOIN event_team_members etm ON etm.event_id = e.id
      WHERE etm.user_id = $1 AND e.workspace_id = $2
      ORDER BY e.created_at DESC`,
@@ -558,14 +589,17 @@ export async function getWorkspaceEvent(
   workspaceId: string
 ): Promise<DbEvent | null> {
   const result = await getPool(env).query<DbEvent>(
-    "SELECT * FROM events WHERE id = $1 AND workspace_id = $2",
+    `SELECT ${EVENT_COLUMNS} FROM events e WHERE e.id = $1 AND e.workspace_id = $2`,
     [id, workspaceId]
   );
   return result.rows[0] ?? null;
 }
 
 export async function getEventById(env: Env, id: string): Promise<DbEvent | null> {
-  const result = await getPool(env).query<DbEvent>("SELECT * FROM events WHERE id = $1", [id]);
+  const result = await getPool(env).query<DbEvent>(
+    `SELECT ${EVENT_COLUMNS} FROM events e WHERE e.id = $1`,
+    [id]
+  );
   return result.rows[0] ?? null;
 }
 
