@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: frameflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Backend: same placeholders the test suites use locally. Clerk and
+      # Appwrite are mocked in tests; only Postgres is real.
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/frameflow_test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/frameflow_test
+      DATABASE_SSL_CA: ""
+      CLERK_SECRET_KEY: sk_test_placeholder
+      APPWRITE_ENDPOINT: https://cloud.appwrite.io/v1
+      APPWRITE_PROJECT_ID: ci-project
+      APPWRITE_API_KEY: ci-key
+      APPWRITE_BUCKET_ID: photos
+      # Frontend build placeholders (NEXT_PUBLIC_* are inlined at build time).
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Apply database migrations
+        run: |
+          for f in supabase/migrations/*.sql; do
+            psql -v ON_ERROR_STOP=1 "$TEST_DATABASE_URL" -q -f "$f"
+          done
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Type check
+        run: bun run check-types
+
+      - name: Test
+        run: bun run test
+
+      - name: Build
+        run: bun run build
