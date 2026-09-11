@@ -1,13 +1,11 @@
 "use client";
 
 import * as React from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
-  Clock,
-  Download,
+  CloudOff,
   FileQuestion,
   Images,
   Loader2,
@@ -16,22 +14,57 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { formatDate } from "@/lib/utils";
-import { galleryService } from "@/lib/services";
-import type { Gallery, Photo } from "@/types";
+import { api, ApiError, type PublicGalleryApi, type PublicPhotoApi } from "@/lib/api/client";
+import type { Photo } from "@/types";
 import { PinInput } from "@/components/gallery/pin-input";
 import { PhotoLightbox } from "@/components/photos/photo-lightbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 
+/** Metadata the customer sees before and after unlocking — served by the backend. */
+type GalleryMeta = {
+  name: string;
+  description: string;
+  slug: string;
+  eventName: string;
+  photoCount: number;
+};
+
 type Gate =
   | { state: "loading" }
-  | { state: "pin"; gallery: Gallery }
-  | { state: "viewing"; gallery: Gallery; photos: Photo[] }
+  | { state: "pin"; meta: GalleryMeta }
+  | { state: "viewing"; meta: GalleryMeta; photos: Photo[] }
   | { state: "not-found" }
-  | { state: "unpublished"; gallery: Gallery }
-  | { state: "expired"; gallery: Gallery }
-  | { state: "empty"; gallery: Gallery };
+  | { state: "unavailable" }
+  | { state: "empty"; meta: GalleryMeta };
+
+function toMeta(g: PublicGalleryApi): GalleryMeta {
+  return {
+    name: g.name,
+    description: g.description,
+    slug: g.slug,
+    eventName: g.event_name ?? g.name,
+    photoCount: g.photo_count,
+  };
+}
+
+function toPublicPhoto(p: PublicPhotoApi): Photo {
+  return {
+    id: p.id,
+    eventId: "",
+    url: p.url,
+    fullUrl: p.url,
+    downloadUrl: p.download_url,
+    filename: p.filename,
+    width: 0,
+    height: 0,
+    // The public surface deliberately carries no uploader attribution.
+    uploaderName: "",
+    uploaderRole: "member",
+    uploadedAt: p.created_at,
+    selected: false,
+  };
+}
 
 export default function CustomerGalleryPage() {
   const params = useParams<{ slug: string }>();
@@ -40,51 +73,57 @@ export default function CustomerGalleryPage() {
   const [pin, setPin] = React.useState("");
   const [verifying, setVerifying] = React.useState(false);
   const [pinError, setPinError] = React.useState(false);
+  const [pinMessage, setPinMessage] = React.useState<string | null>(null);
   const [shakeKey, setShakeKey] = React.useState(0);
   const [lightboxIndex, setLightboxIndex] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     if (!slug) return;
     let cancelled = false;
-    galleryService.getBySlug(slug).then((gallery) => {
-      if (cancelled) return;
-      if (!gallery) {
-        setGate({ state: "not-found" });
-        return;
+    api.getPublicGallery(slug).then(
+      (res) => {
+        if (cancelled) return;
+        setGate({ state: "pin", meta: toMeta(res.gallery) });
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        // Unknown or unpublished slugs 404; anything else is a reachability problem.
+        setGate({
+          state: err instanceof ApiError && err.status === 404 ? "not-found" : "unavailable",
+        });
       }
-      if (gallery.status === "draft") {
-        setGate({ state: "unpublished", gallery });
-        return;
-      }
-      if (gallery.status === "expired") {
-        setGate({ state: "expired", gallery });
-        return;
-      }
-      setGate({ state: "pin", gallery });
-    });
+    );
     return () => {
       cancelled = true;
     };
   }, [slug]);
 
   async function verifyPin(code: string) {
-    if (gate.state !== "pin" || code.length !== 6) return;
+    if (gate.state !== "pin" || code.length !== 6 || !slug) return;
     setVerifying(true);
-    const result = await galleryService.verifyPin(gate.gallery.slug, code);
-    setVerifying(false);
-    if (result === "ok") {
-      const photos = await galleryService.getPhotos(gate.gallery.id);
-      if (photos.length === 0) {
-        setGate({ state: "empty", gallery: gate.gallery });
+    setPinMessage(null);
+    try {
+      const res = await api.unlockGallery(slug, code);
+      if (res.photos.length === 0) {
+        setGate({ state: "empty", meta: toMeta(res.gallery) });
       } else {
-        setGate({ state: "viewing", gallery: gate.gallery, photos });
+        setGate({ state: "viewing", meta: toMeta(res.gallery), photos: res.photos.map(toPublicPhoto) });
       }
-    } else {
-      setPinError(true);
-      setShakeKey((k) => k + 1);
-      setPin("");
-      const t = setTimeout(() => setPinError(false), 1800);
-      void t;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setGate({ state: "not-found" });
+      } else {
+        // Wrong PIN (403), locked out (429), or a network failure — the
+        // backend message is customer-safe either way.
+        setPinMessage(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
+        setPinError(true);
+        setShakeKey((k) => k + 1);
+        setPin("");
+        const t = setTimeout(() => setPinError(false), 1800);
+        void t;
+      }
+    } finally {
+      setVerifying(false);
     }
   }
 
@@ -105,19 +144,20 @@ export default function CustomerGalleryPage() {
 
       {gate.state === "pin" && (
         <PinGate
-          gallery={gate.gallery}
+          meta={gate.meta}
           pin={pin}
           onPinChange={setPin}
           onComplete={verifyPin}
           verifying={verifying}
           error={pinError}
+          message={pinMessage}
           shakeKey={shakeKey}
         />
       )}
 
       {gate.state === "viewing" && (
         <GalleryView
-          gallery={gate.gallery}
+          meta={gate.meta}
           photos={gate.photos}
           lightboxIndex={lightboxIndex}
           setLightboxIndex={setLightboxIndex}
@@ -128,23 +168,15 @@ export default function CustomerGalleryPage() {
         <GalleryMessage
           icon={FileQuestion}
           title="Gallery not found"
-          description="This link doesn't match any gallery. Check the link with your photographer, or head back to the FrameFlow site."
+          description="This link doesn't match any published gallery. Check the link with your photographer, or head back to the FrameFlow site."
         />
       )}
 
-      {gate.state === "unpublished" && (
+      {gate.state === "unavailable" && (
         <GalleryMessage
-          icon={Clock}
-          title="This gallery isn't available yet"
-          description={`“${gate.gallery.name}” is still being prepared. Your photographer will share it the moment it's ready.`}
-        />
-      )}
-
-      {gate.state === "expired" && (
-        <GalleryMessage
-          icon={Clock}
-          title="This gallery has expired"
-          description={`“${gate.gallery.name}” was available until ${formatDate(gate.gallery.expiresAt ?? "")}. Contact your photographer if you still need access.`}
+          icon={CloudOff}
+          title="Gallery unavailable"
+          description="We couldn't reach the server just now. Check your connection and reload the page in a moment."
         />
       )}
 
@@ -162,42 +194,33 @@ export default function CustomerGalleryPage() {
 /* ---------- PIN gate ---------- */
 
 function PinGate({
-  gallery,
+  meta,
   pin,
   onPinChange,
   onComplete,
   verifying,
   error,
+  message,
   shakeKey,
 }: {
-  gallery: Gallery;
+  meta: GalleryMeta;
   pin: string;
   onPinChange: (pin: string) => void;
   onComplete: (pin: string) => void;
   verifying: boolean;
   error: boolean;
+  message: string | null;
   shakeKey: number;
 }) {
   return (
-    <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-6">
-      <div className="absolute inset-0" aria-hidden="true">
-        <Image
-          src={gallery.coverUrl}
-          alt=""
-          fill
-          sizes="100vw"
-          className="scale-110 object-cover blur-2xl brightness-[0.4]"
-          priority
-        />
-      </div>
-
-      <div className="relative z-10 flex w-full max-w-sm flex-col items-center text-center animate-fade-up">
+    <div className="flex min-h-dvh flex-col items-center justify-center px-6">
+      <div className="flex w-full max-w-sm flex-col items-center text-center animate-fade-up">
         <p className="font-display text-lg font-semibold tracking-tight">FrameFlow</p>
         <span className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1 text-xs font-medium backdrop-blur">
           <LockKeyhole className="size-3" aria-hidden="true" /> Private gallery
         </span>
         <h1 className="mt-6 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-          {gallery.eventName}
+          {meta.eventName}
         </h1>
         <p className="mt-2 text-sm text-white/70">
           Enter the PIN provided by your photographer.
@@ -207,7 +230,7 @@ function PinGate({
           <PinInput
             value={pin}
             onValueChange={onPinChange}
-            onComplete={verifyAndReset}
+            onComplete={onComplete}
             error={error}
             disabled={verifying}
             errorShakeKey={shakeKey}
@@ -216,7 +239,7 @@ function PinGate({
 
         <p aria-live="assertive" className="mt-4 min-h-5 text-sm">
           {error ? (
-            <span className="text-red-300">Incorrect PIN. Please try again.</span>
+            <span className="text-red-300">{message ?? "Incorrect PIN. Please try again."}</span>
           ) : verifying ? (
             <span className="inline-flex items-center gap-2 text-white/70">
               <Loader2 className="size-3.5 animate-spin" /> Verifying…
@@ -240,21 +263,17 @@ function PinGate({
       </div>
     </div>
   );
-
-  async function verifyAndReset(code: string) {
-    onComplete(code);
-  }
 }
 
 /* ---------- Gallery view ---------- */
 
 function GalleryView({
-  gallery,
+  meta,
   photos,
   lightboxIndex,
   setLightboxIndex,
 }: {
-  gallery: Gallery;
+  meta: GalleryMeta;
   photos: Photo[];
   lightboxIndex: number | null;
   setLightboxIndex: (i: number | null) => void;
@@ -262,7 +281,7 @@ function GalleryView({
   function share() {
     const url = window.location.href;
     if (navigator.share) {
-      navigator.share({ title: gallery.name, url }).catch(() => {});
+      navigator.share({ title: meta.name, url }).catch(() => {});
     } else {
       navigator.clipboard?.writeText(url).then(
         () => toast.success("Link copied"),
@@ -277,24 +296,13 @@ function GalleryView({
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3.5 md:px-6">
           <div className="min-w-0 flex-1">
             <p className="font-display text-lg font-semibold leading-tight tracking-tight">
-              {gallery.name}
+              {meta.name}
             </p>
             <p className="text-xs text-white/60">
-              {gallery.eventName} · {photos.length} photos
-              {gallery.expiresAt ? ` · Available until ${formatDate(gallery.expiresAt)}` : ""}
+              {meta.eventName} · {photos.length} photos
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {gallery.downloadEnabled && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-white hover:bg-white/10 hover:text-white"
-                onClick={() => toast.success("Download started", { description: "Preparing your photos as a ZIP." })}
-              >
-                <Download /> <span className="hidden sm:inline">Download</span>
-              </Button>
-            )}
             <Button
               size="sm"
               className="bg-white text-neutral-900 hover:bg-white/90"
@@ -307,7 +315,7 @@ function GalleryView({
       </header>
 
       <p className="mx-auto max-w-6xl px-4 pt-6 text-sm text-white/60 md:px-6">
-        {gallery.description}
+        {meta.description}
       </p>
 
       {/* Masonry grid */}
@@ -324,9 +332,9 @@ function GalleryView({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={photo.url}
-                alt={`${gallery.eventName} — photo ${index + 1} of ${photos.length}`}
-                width={photo.width}
-                height={photo.height}
+                alt={`${meta.eventName} — photo ${index + 1} of ${photos.length}`}
+                width={photo.width || undefined}
+                height={photo.height || undefined}
                 loading="lazy"
                 className="w-full transition-transform duration-300 group-hover:scale-[1.02]"
               />
@@ -340,8 +348,8 @@ function GalleryView({
         index={lightboxIndex}
         onClose={() => setLightboxIndex(null)}
         onNavigate={(i) => setLightboxIndex(i)}
-        downloadEnabled={gallery.downloadEnabled}
-        title={gallery.name}
+        downloadEnabled
+        title={meta.name}
       />
     </div>
   );

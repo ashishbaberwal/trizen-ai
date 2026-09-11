@@ -164,6 +164,15 @@ export const api = {
     apiFetch<{ galleries: GalleryApi[] }>(`/events/${eventId}/galleries`, { token }),
   publishGallery: (token: string | null, galleryId: string) =>
     apiFetch<{ gallery: GalleryApi }>(`/galleries/${galleryId}/publish`, { method: "POST", token }),
+
+  // ---- Public gallery (customer surface — no Clerk token, PIN-verified server-side) ----
+  getPublicGallery: (slug: string) =>
+    apiFetch<{ gallery: PublicGalleryApi }>(`/public/galleries/${encodeURIComponent(slug)}`),
+  unlockGallery: (slug: string, pin: string) =>
+    apiFetch<{ gallery: PublicGalleryApi; photos: PublicPhotoApi[] }>(
+      `/public/galleries/${encodeURIComponent(slug)}/unlock`,
+      { method: "POST", body: { pin } }
+    ),
 };
 
 /**
@@ -256,6 +265,8 @@ export interface PhotoApi {
   mime_type: string;
   file_size: number;
   url: string;
+  /** Appwrite attachment endpoint — browsers download instead of navigating. */
+  download_url: string;
   created_at: string;
 }
 
@@ -272,6 +283,8 @@ export function toPhoto(p: PhotoApi): Photo {
     eventId: p.event_id,
     url: p.url,
     fullUrl: p.url,
+    downloadUrl: p.download_url,
+    filename: p.filename,
     width: 0,
     height: 0,
     // The API joins the uploader and falls back to their email server-side, so
@@ -361,5 +374,24 @@ export interface GalleryApi {
   photo_count: number;
   pin: string;
   published_at: string | null;
+  created_at: string;
+}
+
+/** What the public gallery surface returns — deliberately narrow: no PIN, no internal ids. */
+export interface PublicGalleryApi {
+  name: string;
+  description: string;
+  slug: string;
+  event_name: string | null;
+  photo_count: number;
+  published_at: string | null;
+}
+
+/** Public photo shape — no uploader attribution, with a real download URL. */
+export interface PublicPhotoApi {
+  id: string;
+  filename: string;
+  url: string;
+  download_url: string;
   created_at: string;
 }

@@ -7,12 +7,27 @@ import {
   Download,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { cn, timeAgo } from "@/lib/utils";
 import type { Photo } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+
+/**
+ * Trigger a real download. Appwrite's /download endpoint serves
+ * Content-Disposition: attachment with the original filename, so the browser
+ * saves the file even though the URL is cross-origin (the `download`
+ * attribute alone is a same-origin hint and is ignored there).
+ */
+function downloadPhoto(photo: Photo) {
+  const a = document.createElement("a");
+  a.href = photo.downloadUrl ?? photo.fullUrl;
+  a.rel = "noopener";
+  if (photo.filename) a.download = photo.filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
 interface PhotoLightboxProps {
   photos: Photo[];
@@ -98,7 +113,7 @@ export function PhotoLightbox({
               size="icon"
               className="text-white hover:bg-white/15 hover:text-white"
               aria-label="Download photo"
-              onClick={() => toast.success("Download started")}
+              onClick={() => downloadPhoto(photo)}
             >
               <Download />
             </Button>

@@ -42,6 +42,10 @@ export interface Photo {
   eventId: string;
   url: string;
   fullUrl: string;
+  /** Appwrite attachment URL — a real download, not a navigation. */
+  downloadUrl?: string;
+  /** Original filename from upload metadata (used as the download name). */
+  filename?: string;
   width: number;
   height: number;
   /** Display name of whoever uploaded it, from the API. */

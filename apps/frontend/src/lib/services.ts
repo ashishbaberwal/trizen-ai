@@ -11,7 +11,6 @@ import {
 import type {
   ActivityItem,
   Event,
-  Gallery,
   Photo,
   TeamMember,
   User,
@@ -67,7 +66,6 @@ export const dashboardService = {
 
 const eventsStore = [...mockEvents] as Mutable<Event>[];
 const teamStore = [...mockTeamMembers] as Mutable<TeamMember>[];
-const galleriesStore = [...mockGalleries] as Mutable<Gallery>[];
 const photosStore = [...mockPhotos] as Mutable<Photo>[];
 
 export const eventService = {
@@ -176,76 +174,3 @@ export const teamService = {
     if (index !== -1) teamStore.splice(index, 1);
   },
 };
-
-export const galleryService = {
-  async list(): Promise<Gallery[]> {
-    await delay(250);
-    return [...galleriesStore];
-  },
-  async listByEvent(eventId: string): Promise<Gallery[]> {
-    await delay(250);
-    return galleriesStore.filter((g) => g.eventId === eventId);
-  },
-  async create(input: {
-    eventId: string;
-    name: string;
-    description: string;
-    photoIds: string[];
-    expiresAt?: string;
-    downloadEnabled: boolean;
-  }): Promise<Gallery> {
-    await delay(800);
-    const event = eventsStore.find((e) => e.id === input.eventId);
-    const slug = input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const gallery: Gallery = {
-      id: `gal-${Date.now()}`,
-      slug,
-      eventId: input.eventId,
-      eventName: event?.name ?? "Event",
-      name: input.name,
-      description: input.description,
-      coverUrl: event?.coverUrl ?? mockEvents[0].coverUrl,
-      photoCount: input.photoIds.length,
-      status: "draft",
-      createdAt: new Date().toISOString(),
-      expiresAt: input.expiresAt,
-      pin: generatePin(),
-      url: `https://frameflow.app/gallery/${slug}`,
-      downloadEnabled: input.downloadEnabled,
-    };
-    galleriesStore.unshift(gallery);
-    return gallery;
-  },
-  async setStatus(galleryId: string, status: Gallery["status"]): Promise<void> {
-    await delay(500);
-    const gallery = galleriesStore.find((g) => g.id === galleryId);
-    if (gallery) {
-      gallery.status = status;
-      if (status === "published") gallery.publishedAt = new Date().toISOString();
-    }
-  },
-  async getBySlug(slug: string): Promise<Gallery | undefined> {
-    await delay(300);
-    return galleriesStore.find((g) => g.slug === slug);
-  },
-  async verifyPin(slug: string, pin: string): Promise<"ok" | "invalid"> {
-    await delay(800);
-    const gallery = galleriesStore.find((g) => g.slug === slug);
-    return gallery && gallery.pin === pin ? "ok" : "invalid";
-  },
-  async getPhotos(galleryId: string): Promise<Photo[]> {
-    await delay(350);
-    // Deterministic sample: the first N photos of the matched event's set.
-    const gallery = galleriesStore.find((g) => g.id === galleryId);
-    if (!gallery) return [];
-    const eventPhotos = photosStore.filter((p) => p.eventId === gallery.eventId);
-    return eventPhotos.slice(0, Math.min(gallery.photoCount, eventPhotos.length)).map((p) => ({
-      ...p,
-      selected: false,
-    }));
-  },
-};
-
-export function generatePin(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
-}

@@ -107,7 +107,7 @@ export default function LandingPage() {
                 <Link href="/register">Create your first event</Link>
               </Button>
               <Button size="lg" variant="outline" asChild>
-                <Link href="/gallery/arjun-priya-ceremony">View demo</Link>
+                <Link href="/login">Sign in</Link>
               </Button>
             </div>
             <p className="mt-5 text-sm text-muted-foreground">
