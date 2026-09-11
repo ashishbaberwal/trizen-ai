@@ -3,8 +3,7 @@
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
-import { useCurrentUserState } from "@/lib/api/use-current-user";
-import { MEMBER_SAFE_USER } from "@/lib/api/use-current-user";
+import { useCurrentUserState, MEMBER_SAFE_USER } from "@/lib/api/use-current-user";
 import type { User } from "@/types";
 import {
   Dialog,
@@ -54,7 +53,13 @@ export function AppShell({
             <DialogDescription>Main application navigation</DialogDescription>
           </DialogHeader>
           <div className="flex h-full flex-col bg-card">
-            <SidebarInner user={resolved} roleLoading={loading} pathname={pathname} items={items} />
+            <SidebarInner
+              user={resolved}
+              roleLoading={loading}
+              pathname={pathname}
+              items={items}
+              idPrefix="sidebar-mobile"
+            />
           </div>
         </DialogContent>
       </Dialog>
@@ -68,8 +73,8 @@ export function AppShell({
         />
         <main
           className={cn(
-            "mx-auto w-full px-4 py-6 md:px-6 md:py-8",
-            maxWidth && "max-w-7xl"
+            "mx-auto w-full px-5 py-8 md:px-8 md:py-10 lg:px-10",
+            maxWidth && "max-w-6xl"
           )}
         >
           {children}

@@ -3,61 +3,74 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  /* Neutral studio palette — cool paper, ink, one cobalt accent */
-  --background: #fcfcfb;
-  --foreground: #1a1a19;
-  --card: #ffffff;
-  --card-foreground: #1a1a19;
-  --popover: #ffffff;
-  --popover-foreground: #1a1a19;
-  --primary: #1a1a19;
-  --primary-foreground: #fcfcfb;
-  --secondary: #f3f3f0;
-  --secondary-foreground: #1a1a19;
-  --muted: #f3f3f0;
-  --muted-foreground: #70706b;
-  --accent: #eef2fc;
-  --accent-foreground: #2b3f8f;
-  --destructive: #bb2d20;
-  --destructive-foreground: #fcfcfb;
-  --success: #226e46;
-  --warning: #935f00;
-  --border: #e5e5e0;
-  --input: #dcdcda;
-  --ring: #4263eb;
+  /*
+   * The Editorial Studio palette — warm gallery paper, warm ink, one
+   * ultramarine accent (the printer's blue). Cool neutrals are banished:
+   * everything sits on the warm side so photography reads true against it.
+   */
+  --background: #faf9f6;
+  --foreground: #1c1917;
+  --card: #fffefb;
+  --card-foreground: #1c1917;
+  --popover: #fffefb;
+  --popover-foreground: #1c1917;
+  --primary: #1c1917;
+  --primary-foreground: #faf9f6;
+  --secondary: #f0ede6;
+  --secondary-foreground: #1c1917;
+  --muted: #f0ede6;
+  --muted-foreground: #7a736a;
+  --accent: #eaeeFa;
+  --accent-foreground: #2c3a9e;
+  --destructive: #b3271b;
+  --destructive-foreground: #faf9f6;
+  --success: #1e6b43;
+  --warning: #8f5d08;
+  --border: #e6e1d6;
+  --input: #d9d3c6;
+  --ring: #3d53d6;
 
   /* chart */
-  --chart: #4263eb;
-  --chart-grid: #e5e5e0;
+  --chart: #3d53d6;
+  --chart-grid: #e6e1d6;
 
-  --radius: 0.5rem;
+  --radius: 0.625rem;
+
+  /* Warm-tinted elevation — shadows should never read grey-blue. */
+  --shadow-hairline: 0 0 0 1px rgb(28 25 23 / 0.045);
+  --shadow-lift: 0 1px 2px rgb(28 25 23 / 0.05), 0 12px 32px -12px rgb(28 25 23 / 0.16);
+  --shadow-float: 0 2px 4px rgb(28 25 23 / 0.06), 0 24px 56px -16px rgb(28 25 23 / 0.24);
 }
 
 .dark {
-  --background: #1a1a19;
-  --foreground: #ededec;
-  --card: #222221;
-  --card-foreground: #ededec;
-  --popover: #222221;
-  --popover-foreground: #ededec;
-  --primary: #ededec;
-  --primary-foreground: #1a1a19;
-  --secondary: #2c2c2b;
-  --secondary-foreground: #ededec;
-  --muted: #2c2c2b;
-  --muted-foreground: #9d9d97;
-  --accent: #262c42;
-  --accent-foreground: #b8c4f2;
+  --background: #171411;
+  --foreground: #ece8e1;
+  --card: #1e1a16;
+  --card-foreground: #ece8e1;
+  --popover: #1e1a16;
+  --popover-foreground: #ece8e1;
+  --primary: #ece8e1;
+  --primary-foreground: #171411;
+  --secondary: #27221d;
+  --secondary-foreground: #ece8e1;
+  --muted: #27221d;
+  --muted-foreground: #a49c8f;
+  --accent: #232946;
+  --accent-foreground: #b1bdf6;
   --destructive: #e0665a;
-  --destructive-foreground: #1a1a19;
+  --destructive-foreground: #171411;
   --success: #63c28e;
   --warning: #dcb45c;
-  --border: #33332f;
-  --input: #3c3c39;
-  --ring: #6d89dc;
+  --border: #2c2620;
+  --input: #382f27;
+  --ring: #7c8fe8;
 
-  --chart: #6d89dc;
-  --chart-grid: #33332f;
+  --chart: #7c8fe8;
+  --chart-grid: #2c2620;
+
+  --shadow-hairline: 0 0 0 1px rgb(0 0 0 / 0.28);
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px -12px rgb(0 0 0 / 0.5);
+  --shadow-float: 0 2px 4px rgb(0 0 0 / 0.45), 0 24px 56px -16px rgb(0 0 0 / 0.6);
 }
 
 @theme inline {
@@ -87,7 +100,11 @@
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
-  --font-display: var(--font-seravek), var(--font-geist-sans), ui-sans-serif, sans-serif;
+  --font-display: var(--font-fraunces), var(--font-geist-sans), ui-serif, Georgia, serif;
+
+  --shadow-hairline: var(--shadow-hairline);
+  --shadow-lift: var(--shadow-lift);
+  --shadow-float: var(--shadow-float);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -132,6 +149,9 @@
   * {
     border-color: var(--border);
   }
+  html {
+    scroll-behavior: smooth;
+  }
   body {
     background: var(--background);
     color: var(--foreground);
@@ -139,9 +159,30 @@
     font-feature-settings: "ss01" on, "cv02" on;
     -webkit-font-smoothing: antialiased;
   }
+  /*
+   * Film grain — a fixed paper-tone noise wash over everything. Barely
+   * perceptible on its own; it removes the "flat digital white" feeling.
+   */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.032;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  :where(.dark) body::after {
+    opacity: 0.05;
+  }
   ::selection {
     background: var(--accent);
     color: var(--accent-foreground);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
   }
 }
 
@@ -155,5 +196,49 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+  /* Editorial overline — mono, wide-tracked, uppercase micro-label. */
+  .overline-label {
+    font-family: var(--font-geist-mono), ui-monospace, monospace;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  /* Light sweep across a skeleton block. */
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      100deg,
+      transparent 30%,
+      rgb(28 25 23 / 0.05) 50%,
+      transparent 70%
+    );
+    animation: shimmer 1.8s ease-in-out infinite;
+  }
+  :where(.dark) .skeleton-shimmer::after {
+    background: linear-gradient(
+      100deg,
+      transparent 30%,
+      rgb(255 255 255 / 0.05) 50%,
+      transparent 70%
+    );
+  }
+  @keyframes shimmer {
+    to {
+      transform: translateX(100%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton-shimmer::after {
+      animation: none;
+    }
   }
 }

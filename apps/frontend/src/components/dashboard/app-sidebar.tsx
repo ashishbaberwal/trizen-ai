@@ -3,32 +3,29 @@
 import * as React from "react";
 import {
   FolderClosed,
-  Images,
   LayoutDashboard,
   UserRound,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 
-import { useCurrentUserState } from "@/lib/api/use-current-user";
-import { MEMBER_SAFE_USER } from "@/lib/api/use-current-user";
+import { useCurrentUserState, MEMBER_SAFE_USER } from "@/lib/api/use-current-user";
 import type { User, UserRole } from "@/types";
 import { SidebarInner } from "@/components/dashboard/sidebar-inner";
 
 /**
  * Role-aware navigation.
- * - ADMIN: Overview / Events / Galleries / Team
+ * - ADMIN: Overview / Events / Team
  * - TEAM_MEMBER: My Events
  *
+ * Galleries live under each event now, so the standalone entry was removed.
  * "My Uploads" used to point at /dashboard/uploads, which has no page — it
- * 404'd for every member. Removed until that page actually exists; a per-user
- * uploads view is still open work, not a dead link.
+ * 404'd for every member; a per-user uploads view is still open work.
  *
  * Nav visibility is UX only — every admin action is enforced server-side.
  */
 const adminNav: NavItem[] = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Events", href: "/dashboard/events", icon: FolderClosed },
-  { label: "Galleries", href: "/dashboard/galleries", icon: Images },
   { label: "Team", href: "/dashboard/team", icon: UserRound },
 ];
 
@@ -54,12 +51,13 @@ export function AppSidebar() {
   const resolved: User = user ?? MEMBER_SAFE_USER;
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r bg-card lg:flex">
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r bg-card/40 lg:flex">
       <SidebarInner
         user={resolved}
         roleLoading={loading}
         pathname={pathname}
         items={roleNav(resolved.role)}
+        idPrefix="sidebar-desktop"
       />
     </aside>
   );

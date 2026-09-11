@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { LayoutGrid, List, Plus, Search } from "lucide-react";
+import { Aperture, LayoutGrid, List, Plus, Search } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 
 import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api/client";
@@ -15,27 +16,35 @@ import { EmptyState } from "@/components/dashboard/empty-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { SegmentedControl } from "@/components/ui/segmented";
+import { fadeSlide, staggerContainer } from "@/lib/motion";
 
 const STATUS_FILTERS: { value: EventStatus | "all"; label: string }[] = [
-  { value: "all", label: "All statuses" },
+  { value: "all", label: "All" },
   { value: "active", label: "Active" },
   { value: "completed", label: "Completed" },
   { value: "draft", label: "Draft" },
 ];
+
+/*
+ * Cover placeholders until custom covers exist — picked by a stable hash of
+ * the event id so a card's photograph never shuffles when the list is
+ * filtered or reordered.
+ */
+const COVERS = [
+  "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=900&h=600&q=80",
+  "https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=900&h=600&q=80",
+  "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?auto=format&fit=crop&w=900&h=600&q=80",
+  "https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=900&h=600&q=80",
+  "https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=900&h=600&q=80",
+  "https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&w=900&h=600&q=80",
+];
+
+function coverFor(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return COVERS[h % COVERS.length]!;
+}
 
 export default function EventsPage() {
   const { user } = useCurrentUserState();
@@ -55,23 +64,15 @@ export default function EventsPage() {
     try {
       const token = await getToken();
       const data = await api.listEvents(token);
-      // Map API events onto the UI shape. Cover uses a deterministic
-      // Unsplash fallback until custom covers exist; counts are real where
-      // the API provides them.
-      const covers = [
-        "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=800&h=450&q=80",
-        "https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=800&h=450&q=80",
-        "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?auto=format&fit=crop&w=800&h=450&q=80",
-      ];
       setEvents(
-        data.events.map((e, i) => ({
+        data.events.map((e) => ({
           id: e.id,
           slug: e.id,
           name: e.name,
           description: e.description,
           date: e.date,
           location: e.location,
-          coverUrl: covers[i % covers.length],
+          coverUrl: coverFor(e.id),
           photoCount: e.photo_count,
           teamMemberCount: 0,
           status: e.status,
@@ -109,121 +110,189 @@ export default function EventsPage() {
     return matchesQuery && matchesStatus;
   });
 
+  // Real numbers for the masthead overline — nothing invented.
+  const activeCount = events.filter((e) => e.status === "active").length;
+  const photoTotal = events.reduce((sum, e) => sum + e.photoCount, 0);
+  const isFiltered = query !== "" || status !== "all";
+
   return (
     <AppShell
       title="Events"
-      crumbs={[{ label: "Events" }]}
-      actions={
-        isAdmin ? (
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus /> <span className="hidden sm:inline">Create event</span>
-            <span className="sm:hidden">Create</span>
-          </Button>
-        ) : undefined
-      }
+      crumbs={[{ label: "Dashboard", href: "/dashboard" }, { label: "Events" }]}
     >
-      <div className="animate-fade-up">
-        <h1 className="font-display text-2xl font-semibold tracking-tight">
-          {isAdmin ? "Events" : "My Events"}
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          {isAdmin ? "Manage your photography projects." : "Events you've been assigned to."}
-        </p>
+      <motion.div variants={staggerContainer(0.07)} initial="hidden" animate="show">
+        {/* Masthead */}
+        <motion.header variants={fadeSlide} className="flex flex-wrap items-end justify-between gap-6">
+          <div className="min-w-0">
+            <p className="overline-label text-muted-foreground">
+              {isFiltered
+                ? `${filtered.length} of ${events.length} events`
+                : `${events.length} events · ${activeCount} active · ${photoTotal} photos`}
+            </p>
+            <h1 className="mt-3 font-display text-4xl font-medium tracking-tight text-balance sm:text-5xl">
+              {isAdmin ? (
+                <>
+                  Every shoot, <em className="italic text-muted-foreground">in focus.</em>
+                </>
+              ) : (
+                <>
+                  Your <em className="italic text-muted-foreground">assignments.</em>
+                </>
+              )}
+            </h1>
+            <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground sm:text-base">
+              {isAdmin
+                ? "The studio's calendar of record — upload together, curate, and deliver client galleries."
+                : "Events you've been assigned to. Open one to upload and review photos."}
+            </p>
+          </div>
+          {isAdmin && (
+            <Button size="lg" onClick={() => setCreateOpen(true)} className="rounded-full">
+              <Plus /> New event
+            </Button>
+          )}
+        </motion.header>
 
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative flex-1 sm:max-w-xs">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        {/* Toolbar — hairline rules top and bottom, like a magazine folio */}
+        <motion.div
+          variants={fadeSlide}
+          className="mt-10 flex flex-col gap-3 border-y py-4 sm:flex-row sm:items-center"
+        >
+          <div className="relative w-full sm:max-w-xs sm:flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by name or location"
-              className="pl-8"
+              className="rounded-full border-transparent bg-secondary/70 pl-9 focus-visible:border-transparent"
               aria-label="Search events"
             />
           </div>
-          <div className="flex items-center gap-2 sm:ml-auto">
-            <Select value={status} onValueChange={(v) => setStatus(v as EventStatus | "all")}>
-              <SelectTrigger className="w-[150px]" aria-label="Filter by status">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUS_FILTERS.map((f) => (
-                  <SelectItem key={f.value} value={f.value}>
-                    {f.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" aria-label="Change layout">
-                  {view === "grid" ? <LayoutGrid /> : <List />}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuRadioGroup
-                  value={view}
-                  onValueChange={(v: string) => setView(v as "grid" | "list")}
-                >
-                  <DropdownMenuRadioItem value="grid">Grid view</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="list">List view</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+          <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 no-scrollbar sm:mx-0 sm:overflow-visible sm:px-0">
+            <SegmentedControl
+              value={status}
+              onChange={(v) => setStatus(v)}
+              options={STATUS_FILTERS}
+              ariaLabel="Filter by status"
+            />
+            <SegmentedControl
+              value={view}
+              onChange={(v) => setView(v)}
+              options={[
+                {
+                  value: "grid",
+                  label: (
+                    <>
+                      <LayoutGrid className="size-3.5" aria-hidden="true" />
+                      <span className="sr-only">Grid view</span>
+                    </>
+                  ),
+                },
+                {
+                  value: "list",
+                  label: (
+                    <>
+                      <List className="size-3.5" aria-hidden="true" />
+                      <span className="sr-only">List view</span>
+                    </>
+                  ),
+                },
+              ]}
+              ariaLabel="Layout"
+            />
           </div>
-        </div>
+        </motion.div>
 
+        {/* Content */}
         {loading ? (
-          <div className={cn("mt-6 grid gap-4", view === "grid" ? "sm:grid-cols-2 xl:grid-cols-3" : "grid-cols-1")}>
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="overflow-hidden rounded-xl border">
-                <Skeleton className="aspect-[16/9] rounded-none" />
-                <div className="space-y-2 p-4">
-                  <Skeleton className="h-4 w-2/3" />
-                  <Skeleton className="h-3 w-1/2" />
-                  <Skeleton className="h-3 w-1/3" />
+          view === "grid" ? (
+            <div className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="overflow-hidden rounded-xl border">
+                  <Skeleton className="skeleton-shimmer aspect-[3/2] rounded-none" />
+                  <div className="space-y-2.5 p-4">
+                    <Skeleton className="skeleton-shimmer h-5 w-2/3" />
+                    <Skeleton className="skeleton-shimmer h-3.5 w-1/2" />
+                    <Skeleton className="skeleton-shimmer mt-4 h-3 w-1/3" />
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-6 border-b py-5">
+                  <Skeleton className="skeleton-shimmer h-3.5 w-7" />
+                  <div className="flex-1 space-y-2.5">
+                    <Skeleton className="skeleton-shimmer h-6 w-1/3" />
+                    <Skeleton className="skeleton-shimmer h-3.5 w-1/4" />
+                  </div>
+                  <Skeleton className="skeleton-shimmer h-3.5 w-16" />
+                </div>
+              ))}
+            </div>
+          )
         ) : error ? (
-          <EmptyState
-            icon={Search}
-            title="Couldn't load events"
-            description={error}
-            action={{ label: "Try again", onClick: () => void load() }}
-            className="rounded-xl border border-dashed"
-          />
+          <motion.div variants={fadeSlide} initial="hidden" animate="show">
+            <EmptyState
+              icon={Search}
+              title="Couldn't load events"
+              description={error}
+              action={{ label: "Try again", onClick: () => void load() }}
+              className="mt-8 rounded-xl border border-dashed"
+            />
+          </motion.div>
         ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={Search}
-            title={query || status !== "all" ? "No events match your filters" : "No events yet"}
-            description={
-              query || status !== "all"
-                ? "Try a different search term or clear the status filter."
-                : isAdmin
-                  ? "Create your first event and invite your team to start uploading."
-                  : "You're not assigned to any events yet. Your admin will assign you soon."
-            }
-            action={
-              isAdmin ? { label: "Create event", onClick: () => setCreateOpen(true) } : undefined
-            }
-            className="rounded-xl border border-dashed"
-          />
+          <motion.div variants={fadeSlide} initial="hidden" animate="show">
+            <EmptyState
+              icon={Aperture}
+              title={query || status !== "all" ? "No events match your filters" : "No events yet"}
+              description={
+                query || status !== "all"
+                  ? "Try a different search term or clear the status filter."
+                  : isAdmin
+                    ? "Create your first event and invite your team to start uploading."
+                    : "You're not assigned to any events yet. Your admin will assign you soon."
+              }
+              action={
+                isAdmin
+                  ? { label: "Create event", onClick: () => setCreateOpen(true) }
+                  : undefined
+              }
+              className="mt-8 rounded-xl border border-dashed"
+            />
+          </motion.div>
         ) : (
-          <div
-            className={cn(
-              "mt-6 grid gap-4",
-              view === "grid" ? "sm:grid-cols-2 xl:grid-cols-3" : "grid-cols-1 max-w-3xl"
+          <AnimatePresence mode="popLayout">
+            {view === "grid" ? (
+              <motion.div
+                key="grid"
+                variants={staggerContainer(0.05)}
+                initial="hidden"
+                animate="show"
+                className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
+              >
+                {filtered.map((event, i) => (
+                  <EventCard key={event.id} event={event} view="grid" index={i} />
+                ))}
+              </motion.div>
+            ) : (
+              <motion.div
+                key="list"
+                variants={staggerContainer(0.04)}
+                initial="hidden"
+                animate="show"
+                className={cn("mt-2 border-t")}
+              >
+                {filtered.map((event, i) => (
+                  <EventCard key={event.id} event={event} view="list" index={i} />
+                ))}
+              </motion.div>
             )}
-          >
-            {filtered.map((event) => (
-              <EventCard key={event.id} event={event} view={view} />
-            ))}
-          </div>
+          </AnimatePresence>
         )}
-      </div>
+      </motion.div>
 
       <CreateEventModal
         open={createOpen}
