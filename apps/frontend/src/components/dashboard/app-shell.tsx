@@ -4,7 +4,7 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 import { useCurrentUserState } from "@/lib/api/use-current-user";
-import { currentUser } from "@/lib/mock-data";
+import { MEMBER_SAFE_USER } from "@/lib/api/use-current-user";
 import type { User } from "@/types";
 import {
   Dialog,
@@ -35,7 +35,7 @@ export function AppShell({
 }: AppShellProps) {
   const [navOpen, setNavOpen] = React.useState(false);
   const { user, loading } = useCurrentUserState();
-  const resolved: User = user ?? currentUser;
+  const resolved: User = user ?? MEMBER_SAFE_USER;
   const items = roleNav(resolved.role);
   const pathname = usePathname();
 

@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import { formatDate, formatNumber, timeAgo } from "@/lib/utils";
 import { api, toGallery, toPhoto, toTeamMember } from "@/lib/api/client";
 import { useAuth } from "@clerk/nextjs";
-import { useCurrentUser } from "@/lib/api/use-current-user";
+import { useCurrentUserState } from "@/lib/api/use-current-user";
 import type { Event, Gallery, Photo, TeamMember } from "@/types";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { EventStatusBadge, GalleryStatusBadge } from "@/components/dashboard/status-badge";
@@ -39,7 +39,7 @@ import { EventTeamPanel } from "@/components/team/event-team-panel";
 export default function EventDetailPage() {
   const params = useParams<{ eventId: string }>();
   const eventId = params.eventId;
-  const user = useCurrentUser();
+  const { user } = useCurrentUserState();
   const isAdmin = user?.role === "admin";
   const { getToken } = useAuth();
   const [loading, setLoading] = React.useState(true);

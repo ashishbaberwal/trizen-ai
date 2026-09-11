@@ -10,7 +10,7 @@ import {
 import { usePathname } from "next/navigation";
 
 import { useCurrentUserState } from "@/lib/api/use-current-user";
-import { currentUser } from "@/lib/mock-data";
+import { MEMBER_SAFE_USER } from "@/lib/api/use-current-user";
 import type { User, UserRole } from "@/types";
 import { SidebarInner } from "@/components/dashboard/sidebar-inner";
 
@@ -51,7 +51,7 @@ export function AppSidebar() {
   const pathname = usePathname();
   // While the role is loading, render nothing meaningful (avoids flashing the
   // wrong nav). After load, fall back to member-safe view on failure.
-  const resolved: User = user ?? currentUser;
+  const resolved: User = user ?? MEMBER_SAFE_USER;
 
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r bg-card lg:flex">

@@ -5,7 +5,18 @@ import { useAuth } from "@clerk/nextjs";
 
 import { api } from "@/lib/api/client";
 import type { User } from "@/types";
-import { currentUser } from "@/lib/mock-data";
+
+/**
+ * Placeholder identity used only for rendering while the verified role is
+ * unavailable (loading or backend unreachable). It is deliberately
+ * member-safe: the UI must never grant admin affordances on a fallback.
+ */
+export const MEMBER_SAFE_USER: User = {
+  id: "unverified",
+  name: "",
+  email: "",
+  role: "member",
+};
 
 export type CurrentUserState = {
   /** null until the verified role has loaded from the backend. */
@@ -67,13 +78,4 @@ export function useCurrentUserState(): CurrentUserState {
   }, [getToken, isLoaded, isSignedIn]);
 
   return state;
-}
-
-/**
- * Convenience hook for components that just need a User object.
- * Falls back to the mock user only while loading (skeletons render first).
- */
-export function useCurrentUser(): User {
-  const { user } = useCurrentUserState();
-  return user ?? currentUser;
 }
