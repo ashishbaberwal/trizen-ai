@@ -358,7 +358,13 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
       res.status(404).json({ error: "Event not found" });
       return;
     }
+    // Collect the storage keys first — deleting the event row cascades the
+    // photo metadata away, and there would be nothing left to look up.
+    const photos = await listEventPhotos(env, event.id);
     await deleteEvent(env, event.id);
+    // Best-effort binary cleanup in Appwrite; a leftover object is preferable
+    // to failing a delete whose metadata is already gone.
+    await Promise.all(photos.map((p) => deletePhotoQuietly(env, p.storage_file_id)));
     res.status(204).send();
   }) as unknown as import("express").RequestHandler);
 
