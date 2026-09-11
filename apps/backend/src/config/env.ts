@@ -25,6 +25,9 @@ const envSchema = z.object({
   APPWRITE_PROJECT_ID: z.string().min(1, "APPWRITE_PROJECT_ID is required"),
   APPWRITE_API_KEY: z.string().min(1, "APPWRITE_API_KEY is required"),
   APPWRITE_BUCKET_ID: z.string().min(1, "APPWRITE_BUCKET_ID is required"),
+  // Optional dedicated secret for signing public gallery access tokens.
+  // When unset, one is derived from CLERK_SECRET_KEY (see gallery-tokens.ts).
+  GALLERY_TOKEN_SECRET: z.string().min(16).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

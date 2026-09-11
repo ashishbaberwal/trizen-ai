@@ -15,11 +15,14 @@ import {
   CheckCircle2,
   Copy,
   ExternalLink,
+  KeyRound,
+  MoreVertical,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { formatDate, formatNumber, timeAgo } from "@/lib/utils";
-import { api, toGallery, toPhoto, toTeamMember } from "@/lib/api/client";
+import { api, ApiError, toGallery, toPhoto, toTeamMember } from "@/lib/api/client";
 import { useAuth } from "@clerk/nextjs";
 import { useCurrentUserState } from "@/lib/api/use-current-user";
 import type { Event, Gallery, Photo, TeamMember } from "@/types";
@@ -27,9 +30,25 @@ import { AppShell } from "@/components/dashboard/app-shell";
 import { EventStatusBadge, GalleryStatusBadge } from "@/components/dashboard/status-badge";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { UploadModal } from "@/components/photos/upload-modal";
 import { PhotoCard } from "@/components/photos/photo-card";
 import { CreateGalleryWizard } from "@/components/galleries/create-gallery-wizard";
@@ -382,6 +401,13 @@ export default function EventDetailPage() {
                       >
                         <Copy className="size-3.5" /> Copy
                       </Button>
+                      {isAdmin && (
+                        <GalleryPinMenu
+                          gallery={g}
+                          token={getToken}
+                          onChanged={() => void load()}
+                        />
+                      )}
                     </div>
 
                     {/* Public gallery link */}
@@ -442,5 +468,107 @@ export default function EventDetailPage() {
         />
       )}
     </AppShell>
+  );
+}
+
+/**
+ * Per-gallery PIN controls: set a custom PIN, or regenerate a fresh
+ * server-generated one. Admin-only surface — the backend re-checks role
+ * and workspace on every call.
+ */
+function GalleryPinMenu({
+  gallery,
+  token,
+  onChanged,
+}: {
+  gallery: Gallery;
+  token: (options?: { skipCache?: boolean }) => Promise<string | null>;
+  onChanged: () => void;
+}) {
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [pin, setPin] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+
+  async function savePin() {
+    setSaving(true);
+    try {
+      const t = await token();
+      await api.setGalleryPin(t, gallery.id, pin);
+      toast.success("PIN updated", { description: "Share the new PIN with your client." });
+      setDialogOpen(false);
+      setPin("");
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't update the PIN");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function regenerate() {
+    try {
+      const t = await token();
+      await api.regenerateGalleryPin(t, gallery.id);
+      toast.success("New PIN generated", { description: "The old PIN no longer opens this gallery." });
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't regenerate the PIN");
+    }
+  }
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-7" aria-label={`PIN options for ${gallery.name}`}>
+            <MoreVertical className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => setDialogOpen(true)}>
+            <KeyRound className="size-4" /> Set custom PIN…
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => void regenerate()}>
+            <RefreshCw className="size-4" /> Regenerate PIN
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Set a custom PIN</DialogTitle>
+            <DialogDescription>
+              6 digits. The gallery link stays the same — only the PIN changes.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (pin.length === 6 && !saving) void savePin();
+            }}
+          >
+            <Input
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              inputMode="numeric"
+              placeholder="000000"
+              className="text-center font-mono text-lg tabular-nums tracking-[0.4em]"
+              aria-label="New 6-digit PIN"
+              autoFocus
+            />
+            <DialogFooter className="mt-4">
+              <Button type="button" variant="ghost" onClick={() => setDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={pin.length !== 6 || saving}>
+                Save PIN
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

@@ -38,6 +38,9 @@ vi.mock("../src/lib/storage.js", async (importOriginal) => {
     })),
     deletePhotoQuietly: vi.fn(async () => undefined),
     checkBucket: vi.fn(async () => true),
+    readPhotoBytes: vi.fn(async (_e: unknown, fileId: string) =>
+      Buffer.concat([Buffer.from(`bytes-of-${fileId}:`), Buffer.alloc(24, 7)])
+    ),
   };
 });
 
@@ -194,12 +197,62 @@ describeIf(hasDb)("Public gallery surface", () => {
       .send({ pin: publishedPin });
     expect(right.status).toBe(200);
     expect(right.body.photos).toHaveLength(1);
-    expect(right.body.photos[0].url).toContain("/view?project=");
-    expect(right.body.photos[0].download_url).toContain("/download?project=");
+    // Photos are backend-proxied with a signed token — never storage URLs.
+    expect(right.body.photos[0].url).toContain(
+      `/api/v1/public/galleries/${publishedSlug}/photos/`
+    );
+    expect(right.body.photos[0].url).toContain("?st=");
+    expect(right.body.photos[0].download_url).toContain("&dl=1");
+    expect(right.body.access_token).toBeTruthy();
+    expect(right.body.expires_at).toBeTruthy();
     const body = JSON.stringify(right.body);
     expect(body).not.toContain(publishedPin);
+    expect(body).not.toContain("appwrite");
     expect(body).not.toContain("uploaded_by");
     expect(body).not.toContain("uploader");
+  });
+
+  it("signed token streams the photo; missing or tampered tokens are rejected", async () => {
+    const unlock = await request(app)
+      .post(`/api/v1/public/galleries/${publishedSlug}/unlock`)
+      .send({ pin: publishedPin });
+    const photoUrl = unlock.body.photos[0].url as string;
+    const downloadUrl = unlock.body.photos[0].download_url as string;
+
+    const ok = await request(app).get(photoUrl);
+    expect(ok.status).toBe(200);
+    expect(ok.headers["content-type"]).toContain("image/png");
+    expect(ok.headers["content-disposition"]).toContain("inline");
+
+    const dl = await request(app).get(downloadUrl);
+    expect(dl.status).toBe(200);
+    expect(dl.headers["content-disposition"]).toContain("attachment");
+
+    const noToken = await request(app).get(
+      `/api/v1/public/galleries/${publishedSlug}/photos/${unlock.body.photos[0].id}`
+    );
+    expect(noToken.status).toBe(403);
+
+    const tampered = await request(app).get(`${photoUrl}x`);
+    expect(tampered.status).toBe(403);
+  });
+
+  it("a valid token cannot read photos outside the gallery", async () => {
+    const other = await request(app)
+      .post(`/api/v1/events/${eventId}/photos`)
+      .set(adminA)
+      .attach("photos", png(), { filename: "outsider.png", contentType: "image/png" });
+    const outsiderId = other.body.photos[0].id;
+
+    const unlock = await request(app)
+      .post(`/api/v1/public/galleries/${publishedSlug}/unlock`)
+      .send({ pin: publishedPin });
+    const photoUrl = unlock.body.photos[0].url as string;
+    const token = photoUrl.split("st=")[1]!;
+    // Same gallery session, different photo — the outsider is NOT in the gallery.
+    const res = await request(app)
+      .get(`/api/v1/public/galleries/${publishedSlug}/photos/${outsiderId}?st=${token}`);
+    expect(res.status).toBe(404);
   });
 
   it("a successful unlock resets the failure counter", async () => {

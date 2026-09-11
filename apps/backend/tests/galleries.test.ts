@@ -259,6 +259,77 @@ describeIf(hasDb)("Admin gallery workflow", () => {
       .send({ name: "Ghost Event", photo_ids: [photoA1] });
     expect(res.status).toBe(404);
   });
+
+  it("admin can set a custom PIN and it unlocks the gallery", async () => {
+    const created = await request(app)
+      .post(`/api/v1/events/${eventA1}/galleries`)
+      .set(adminA)
+      .send({ name: "Custom PIN", photo_ids: [photoA1] });
+    const galleryId = created.body.gallery.id;
+
+    const patched = await request(app)
+      .patch(`/api/v1/galleries/${galleryId}`)
+      .set(adminA)
+      .send({ pin: "246810" });
+    expect(patched.status).toBe(200);
+    expect(patched.body.gallery.pin).toBe("246810");
+  });
+
+  it("regenerate replaces the PIN with a fresh server-generated one", async () => {
+    const created = await request(app)
+      .post(`/api/v1/events/${eventA1}/galleries`)
+      .set(adminA)
+      .send({ name: "Regen PIN", photo_ids: [photoA1] });
+    const galleryId = created.body.gallery.id;
+
+    // Publish so the public unlock surface can be used to verify the swap.
+    await request(app).post(`/api/v1/galleries/${galleryId}/publish`).set(adminA);
+
+    const regen = await request(app)
+      .post(`/api/v1/galleries/${galleryId}/pin/regenerate`)
+      .set(adminA);
+    expect(regen.status).toBe(200);
+    expect(regen.body.gallery.pin).toMatch(/^\d{6}$/);
+    // The old auto PIN is gone unless the random draw collided (1 in a million).
+    if (regen.body.gallery.pin !== created.body.gallery.pin) {
+      const unlockOld = await request(app)
+        .post(`/api/v1/public/galleries/${created.body.gallery.slug}/unlock`)
+        .send({ pin: created.body.gallery.pin });
+      expect(unlockOld.status).toBe(403);
+    }
+  });
+
+  it("malformed PIN is rejected", async () => {
+    const created = await request(app)
+      .post(`/api/v1/events/${eventA1}/galleries`)
+      .set(adminA)
+      .send({ name: "Bad Pin", photo_ids: [photoA1] });
+    const res = await request(app)
+      .patch(`/api/v1/galleries/${created.body.gallery.id}`)
+      .set(adminA)
+      .send({ pin: "12ab" });
+    expect(res.status).toBe(400);
+  });
+
+  it("team member cannot set a PIN (403) and cross-workspace admin gets 404", async () => {
+    const created = await request(app)
+      .post(`/api/v1/events/${eventA1}/galleries`)
+      .set(adminA)
+      .send({ name: "Member Pin", photo_ids: [photoA1] });
+    const galleryId = created.body.gallery.id;
+
+    const member = await request(app)
+      .patch(`/api/v1/galleries/${galleryId}`)
+      .set(memberC)
+      .send({ pin: "111111" });
+    expect(member.status).toBe(403);
+
+    const other = await request(app)
+      .patch(`/api/v1/galleries/${galleryId}`)
+      .set(adminB)
+      .send({ pin: "111111" });
+    expect(other.status).toBe(404);
+  });
 });
 
 async function seedWorkspaces(env: Env) {

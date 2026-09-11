@@ -31,6 +31,16 @@ function buildUrl(path: string): string {
   return `${API_URL}/api/v1${path}`;
 }
 
+/**
+ * Resolve a media URL returned by the API. Public-gallery photo URLs come
+ * back as backend-relative paths (proxied bytes with a signed token); the
+ * backend origin is prepended here. Absolute URLs pass through untouched.
+ */
+export function resolveAssetUrl(url: string): string {
+  if (url.startsWith("/")) return `${API_URL}${url}`;
+  return url;
+}
+
 /** How long to wait for Clerk to produce a session token before giving up. */
 const TOKEN_TIMEOUT_MS = 15_000;
 
@@ -164,6 +174,17 @@ export const api = {
     apiFetch<{ galleries: GalleryApi[] }>(`/events/${eventId}/galleries`, { token }),
   publishGallery: (token: string | null, galleryId: string) =>
     apiFetch<{ gallery: GalleryApi }>(`/galleries/${galleryId}/publish`, { method: "POST", token }),
+  setGalleryPin: (token: string | null, galleryId: string, pin: string) =>
+    apiFetch<{ gallery: GalleryApi }>(`/galleries/${galleryId}`, {
+      method: "PATCH",
+      body: { pin },
+      token,
+    }),
+  regenerateGalleryPin: (token: string | null, galleryId: string) =>
+    apiFetch<{ gallery: GalleryApi }>(`/galleries/${galleryId}/pin/regenerate`, {
+      method: "POST",
+      token,
+    }),
 
   // ---- Public gallery (customer surface — no Clerk token, PIN-verified server-side) ----
   getPublicGallery: (slug: string) =>

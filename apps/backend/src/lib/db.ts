@@ -413,6 +413,15 @@ export async function publishGallery(env: Env, id: string): Promise<DbGallery | 
   return result.rows[0] ?? null;
 }
 
+/** Replace a gallery's PIN (admin-set custom PIN or a regenerated one). */
+export async function updateGalleryPin(env: Env, id: string, pin: string): Promise<DbGallery | null> {
+  const result = await getPool(env).query<DbGallery>(
+    `UPDATE galleries SET pin = $2, updated_at = now() WHERE id = $1 RETURNING *`,
+    [id, pin]
+  );
+  return result.rows[0] ?? null;
+}
+
 /** Photo IDs associated with a gallery, in insertion order. */
 export async function listGalleryPhotoIds(env: Env, galleryId: string): Promise<string[]> {
   const result = await getPool(env).query<{ photo_id: string }>(

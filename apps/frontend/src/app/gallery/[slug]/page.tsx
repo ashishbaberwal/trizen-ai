@@ -15,7 +15,13 @@ import {
 import { motion } from "motion/react";
 import { toast } from "sonner";
 
-import { api, ApiError, type PublicGalleryApi, type PublicPhotoApi } from "@/lib/api/client";
+import {
+  api,
+  ApiError,
+  resolveAssetUrl,
+  type PublicGalleryApi,
+  type PublicPhotoApi,
+} from "@/lib/api/client";
 import { formatDate, formatNumber } from "@/lib/utils";
 import type { Photo } from "@/types";
 import { PinInput } from "@/components/gallery/pin-input";
@@ -62,12 +68,14 @@ function toMeta(g: PublicGalleryApi): GalleryMeta {
 }
 
 function toPublicPhoto(p: PublicPhotoApi): Photo {
+  // Photo bytes are proxied by the backend behind a signed token —
+  // resolveAssetUrl prepends the API origin to the relative path.
   return {
     id: p.id,
     eventId: "",
-    url: p.url,
-    fullUrl: p.url,
-    downloadUrl: p.download_url,
+    url: resolveAssetUrl(p.url),
+    fullUrl: resolveAssetUrl(p.url),
+    downloadUrl: resolveAssetUrl(p.download_url),
     filename: p.filename,
     width: 0,
     height: 0,

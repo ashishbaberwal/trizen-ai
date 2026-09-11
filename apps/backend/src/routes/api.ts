@@ -37,6 +37,7 @@ import {
   setUserRole,
   uniqueGallerySlug,
   updateEvent,
+  updateGalleryPin,
   upsertUserFromClerk,
   type DbEvent,
   type DbGallery,
@@ -45,6 +46,7 @@ import {
   type DbUser,
 } from "../lib/db.js";
 import { getClerkClientForEnv } from "../lib/clerk.js";
+import { GALLERY_TOKEN_TTL_MS, signGalleryAccessToken, verifyGalleryAccessToken } from "../lib/gallery-tokens.js";
 import type { AuthedRequest } from "../middleware/auth.js";
 import { requireRole } from "../middleware/auth.js";
 import { HttpError } from "../middleware/error.js";
@@ -54,6 +56,7 @@ import {
   deletePhotoQuietly,
   photoDownloadUrl,
   photoUrl,
+  readPhotoBytes,
   uploadPhoto,
 } from "../lib/storage.js";
 import { clearFailures, isRateLimited, recordFailure } from "../lib/rate-limit.js";
@@ -88,6 +91,8 @@ const createGallerySchema = z.object({
 const unlockGallerySchema = z.object({
   pin: z.string().regex(/^\d{6}$/, "PIN must be 6 digits"),
 });
+
+const setPinSchema = unlockGallerySchema;
 
 /**
  * Resolve the Postgres row for the verified Clerk identity on the request.
@@ -659,6 +664,52 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
     res.json({ gallery: serializeGallery(published, photoCount) });
   }) as unknown as import("express").RequestHandler);
 
+  /**
+   * Shared gate for gallery management: the gallery must exist and belong
+   * to the admin's workspace (checked through its event).
+   */
+  async function authorizeGalleryAccess(req: Request, res: Response) {
+    const actor = await resolveAppUser(env, req);
+    const gallery = await getGalleryById(env, String(req.params.id));
+    if (!gallery) {
+      res.status(404).json({ error: "Gallery not found" });
+      return null;
+    }
+    const event = await getWorkspaceEvent(env, gallery.event_id, actor.workspace_id);
+    if (!event) {
+      res.status(404).json({ error: "Gallery not found" });
+      return null;
+    }
+    return { actor, gallery };
+  }
+
+  /** Set a custom PIN — the auto-generated one can always be replaced. */
+  router.patch("/galleries/:id", requireRole(env, "ADMIN"), (async (req: Request, res: Response) => {
+    const parsed = setPinSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid input", details: parsed.error.flatten() });
+      return;
+    }
+    const ctx = await authorizeGalleryAccess(req, res);
+    if (!ctx) return;
+    const updated = await updateGalleryPin(env, ctx.gallery.id, parsed.data.pin);
+    const photoCount = (await listGalleryPhotoIds(env, ctx.gallery.id)).length;
+    res.json({ gallery: serializeGallery(updated!, photoCount) });
+  }) as unknown as import("express").RequestHandler);
+
+  /** Regenerate: a fresh server-generated PIN replaces the current one. */
+  router.post("/galleries/:id/pin/regenerate", requireRole(env, "ADMIN"), (async (
+    req: Request,
+    res: Response
+  ) => {
+    const ctx = await authorizeGalleryAccess(req, res);
+    if (!ctx) return;
+    const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    const updated = await updateGalleryPin(env, ctx.gallery.id, pin);
+    const photoCount = (await listGalleryPhotoIds(env, ctx.gallery.id)).length;
+    res.json({ gallery: serializeGallery(updated!, photoCount) });
+  }) as unknown as import("express").RequestHandler);
+
   // ------------------------------------------------------------------
   // Public gallery surface (no Clerk auth — this is the customer link).
   // The slug itself is unguessable enough for a shareable URL; the photos
@@ -708,10 +759,62 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
     }
     clearFailures(key);
     const photos = await listGalleryPhotos(env, gallery.id);
+    // A successful unlock mints a signed, expiring token. Photo bytes are
+    // then served by the backend (see the route below) — the client never
+    // receives a raw storage URL.
+    const expiresAt = Date.now() + GALLERY_TOKEN_TTL_MS;
+    const accessToken = signGalleryAccessToken(env, slug, expiresAt);
     res.json({
       gallery: serializePublicGallery(gallery, photos.length),
-      photos: photos.map((p) => serializePublicPhoto(p, env)),
+      access_token: accessToken,
+      expires_at: new Date(expiresAt).toISOString(),
+      photos: photos.map((p) => serializePublicPhoto(p, slug, accessToken)),
     });
+  }) as unknown as import("express").RequestHandler);
+
+  /**
+   * Stream one gallery photo. The signed token from /unlock authorizes this
+   * gallery for its TTL; the photo must belong to that gallery, and the
+   * gallery must still be published. `dl=1` forces a download instead of
+   * inline display.
+   */
+  router.get("/public/galleries/:slug/photos/:photoId", (async (req: Request, res: Response) => {
+    const slug = String(req.params.slug);
+    const token = String(req.query.st ?? "");
+    if (!verifyGalleryAccessToken(env, slug, token)) {
+      res.status(403).json({ error: "This gallery session has expired. Enter the PIN again." });
+      return;
+    }
+    const gallery = await getPublishedGalleryBySlug(env, slug);
+    if (!gallery) {
+      res.status(404).json({ error: "Gallery not found" });
+      return;
+    }
+    const photo = await getPhotoById(env, String(req.params.photoId));
+    if (!photo) {
+      res.status(404).json({ error: "Photo not found" });
+      return;
+    }
+    // The photo must actually be part of THIS gallery.
+    const photoIds = await listGalleryPhotoIds(env, gallery.id);
+    if (!photoIds.includes(photo.id)) {
+      res.status(404).json({ error: "Photo not found" });
+      return;
+    }
+    try {
+      const bytes = await readPhotoBytes(env, photo.storage_file_id);
+      const safeName = photo.filename.replace(/["\\\r\n]/g, "_");
+      res.set({
+        "Content-Type": photo.mime_type,
+        "Content-Length": String(bytes.byteLength),
+        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": `${req.query.dl === "1" ? "attachment" : "inline"}; filename="${safeName}"`,
+      });
+      res.send(bytes);
+    } catch (err) {
+      console.error("Photo proxy failed:", (err as Error).message);
+      res.status(502).json({ error: "Couldn't load this photo" });
+    }
   }) as unknown as import("express").RequestHandler);
 
   return router;
@@ -819,13 +922,19 @@ export function serializePublicGallery(
   };
 }
 
-/** Public photo shape: no uploader attribution, no event/workspace linkage. */
-export function serializePublicPhoto(p: DbPhoto, appwriteEnv: Env) {
+/**
+ * Public photo shape: backend-proxied URLs carrying the unlock session's
+ * signed token — no uploader attribution, no storage URLs, no ids beyond
+ * the photo itself.
+ */
+export function serializePublicPhoto(p: DbPhoto, slug: string, token: string) {
+  const base = `/api/v1/public/galleries/${encodeURIComponent(slug)}/photos/${p.id}`;
+  const st = encodeURIComponent(token);
   return {
     id: p.id,
     filename: p.filename,
-    url: photoUrl(appwriteEnv, p.storage_file_id),
-    download_url: photoDownloadUrl(appwriteEnv, p.storage_file_id),
+    url: `${base}?st=${st}`,
+    download_url: `${base}?st=${st}&dl=1`,
     created_at: new Date(p.created_at).toISOString(),
   };
 }

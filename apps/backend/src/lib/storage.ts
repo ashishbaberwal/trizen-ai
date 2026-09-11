@@ -94,6 +94,19 @@ export async function deletePhotoQuietly(env: Env, storageFileId: string): Promi
 }
 
 /**
+ * Read photo bytes through the server (API-key authenticated). The public
+ * gallery streams photos through this instead of handing out direct
+ * Appwrite view URLs, so access is gated by the backend on every request.
+ */
+export async function readPhotoBytes(env: Env, storageFileId: string): Promise<Buffer> {
+  const view = await getStorage(env).getFileView({
+    bucketId: env.APPWRITE_BUCKET_ID,
+    fileId: storageFileId,
+  });
+  return Buffer.from(view as ArrayBuffer);
+}
+
+/**
  * Build a stable, public download URL for a stored photo. The bucket is
  * file-security enabled; backend permission grants access, so the plain
  * view URL works for <img> tags without exposing any API key.
