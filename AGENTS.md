@@ -155,9 +155,12 @@ Rules:
   - `/api/v1/events/:id/team-members` — event assignment (ADMIN writes, members read)
   - `POST /api/v1/events/:eventId/photos`, `GET .../photos`, `DELETE /api/v1/photos/:photoId`
     — binaries to Appwrite, metadata to Postgres
-  - `/api/v1/events/:id/galleries`, `POST /api/v1/galleries/:id/publish` — curation + publishing (ADMIN)
-  - `GET /api/v1/public/galleries/:slug`, `POST /api/v1/public/galleries/:slug/unlock`
-    — customer surface (no Clerk auth; server-verified PIN, rate limited; drafts 404)
+  - `/api/v1/events/:id/galleries`, `POST /api/v1/galleries/:id/publish`, 
+    `PATCH /api/v1/galleries/:id` (custom PIN), `POST …/pin/regenerate` — curation + publishing (ADMIN)
+  - `GET /api/v1/public/galleries/:slug`, `POST /api/v1/public/galleries/:slug/unlock`,
+    `GET /api/v1/public/galleries/:slug/photos/:photoId?st=` — customer surface
+    (no Clerk auth; server-verified PIN, rate limited; photos proxied behind an
+    HMAC-signed 12h token minted at unlock — `src/lib/gallery-tokens.ts`; drafts 404)
 - Errors return `{ "error": "..." }`; internals never leak into responses.
 
 ## Frontend ↔ Backend
@@ -239,3 +242,6 @@ is live end to end. Deliberately still open — do not build ahead of the plan:
   needs a coordinated migration + deploy — ask before touching remote DBs)
 - Redis/Postgres-backed rate limiting if the API ever runs multi-instance
   (the PIN limiter in `src/lib/rate-limit.ts` is in-memory, per process)
+- Dashboard photos still render direct Appwrite view URLs for signed-in
+  users; the public gallery is fully proxied behind signed tokens. Making
+  the bucket private end-to-end is the remaining hardening step.
