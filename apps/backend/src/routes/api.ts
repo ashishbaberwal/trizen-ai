@@ -805,7 +805,7 @@ export function serializePhoto(p: DbPhoto, appwriteEnv: Env) {
  * screen and gallery view render.
  */
 export function serializePublicGallery(
-  g: DbGallery & { event_name?: string | null },
+  g: DbGallery & { event_name?: string | null; event_date?: string | null },
   photoCount: number
 ) {
   return {
@@ -813,6 +813,7 @@ export function serializePublicGallery(
     description: g.description,
     slug: g.slug,
     event_name: g.event_name ?? null,
+    event_date: g.event_date ?? null,
     photo_count: photoCount,
     published_at: g.published_at ? new Date(g.published_at).toISOString() : null,
   };

@@ -363,16 +363,16 @@ export async function getGalleryById(env: Env, id: string): Promise<DbGallery | 
 }
 
 /**
- * Public read: a PUBLISHED gallery by slug, joined with its event name.
- * Draft galleries behave exactly like missing ones — the public surface
- * must not reveal that a slug exists while unpublished.
+ * Public read: a PUBLISHED gallery by slug, joined with its event name and
+ * date. Draft galleries behave exactly like missing ones — the public
+ * surface must not reveal that a slug exists while unpublished.
  */
 export async function getPublishedGalleryBySlug(
   env: Env,
   slug: string
-): Promise<(DbGallery & { event_name: string }) | null> {
-  const result = await getPool(env).query<DbGallery & { event_name: string }>(
-    `SELECT g.*, e.name AS event_name
+): Promise<(DbGallery & { event_name: string; event_date: string }) | null> {
+  const result = await getPool(env).query<DbGallery & { event_name: string; event_date: string }>(
+    `SELECT g.*, e.name AS event_name, e.event_date::text AS event_date
      FROM galleries g
      JOIN events e ON e.id = g.event_id
      WHERE g.slug = $1 AND g.status = 'published'`,

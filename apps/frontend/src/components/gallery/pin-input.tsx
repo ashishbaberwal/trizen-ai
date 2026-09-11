@@ -13,6 +13,11 @@ interface PinInputProps {
   errorShakeKey?: number;
 }
 
+/**
+ * 6-digit PIN entry styled for the light editorial gallery — warm paper
+ * tiles, ink dots, hairline borders. A single hidden input carries the
+ * real value for accessibility and autofill (one-time-code).
+ */
 export function PinInput({ onComplete, error, disabled, value, onValueChange, errorShakeKey }: PinInputProps) {
   const [internal, setInternal] = React.useState("");
   const pin = value !== undefined ? value : internal;
@@ -56,7 +61,7 @@ export function PinInput({ onComplete, error, disabled, value, onValueChange, er
         type="button"
         onClick={() => hiddenRef.current?.focus()}
         onFocus={() => hiddenRef.current?.focus()}
-        className="flex items-center gap-2.5 focus-visible:outline-none cursor-pointer"
+        className="flex cursor-pointer items-center gap-2.5 focus-visible:outline-none"
         aria-label="Enter PIN"
         disabled={disabled}
       >
@@ -65,9 +70,13 @@ export function PinInput({ onComplete, error, disabled, value, onValueChange, er
             key={`${i}-${errorShakeKey ?? 0}`}
             aria-hidden="true"
             className={cn(
-              "flex size-11 items-center justify-center rounded-lg border-2 bg-white/10 font-display text-xl font-semibold text-white backdrop-blur-md transition-all sm:size-13",
-              focused && i === pin.length && "border-white/90 ring-2 ring-white/30",
-              error ? "border-destructive text-destructive animate-scale-in" : "border-white/25"
+              "flex size-11 items-center justify-center rounded-xl border bg-white font-display text-xl font-semibold shadow-hairline transition-all sm:size-13",
+              focused && i === pin.length && "ring-2 ring-[#3d53d6]/30",
+              error
+                ? "border-destructive text-destructive animate-scale-in"
+                : focused && i === pin.length
+                  ? "border-[#1c1917]"
+                  : "border-[#e6e1d6]"
             )}
           >
             {pin[i] ? "•" : ""}
@@ -77,4 +86,3 @@ export function PinInput({ onComplete, error, disabled, value, onValueChange, er
     </div>
   );
 }
-

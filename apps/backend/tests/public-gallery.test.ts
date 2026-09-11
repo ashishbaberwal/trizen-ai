@@ -153,6 +153,7 @@ describeIf(hasDb)("Public gallery surface", () => {
     expect(res.status).toBe(200);
     expect(res.body.gallery.name).toMatch(/Customer Gallery/);
     expect(res.body.gallery.event_name).toMatch(/Public Gal Ev/);
+    expect(res.body.gallery.event_date).toBe("2026-12-05");
     expect(res.body.gallery.photo_count).toBe(1);
     // Only published galleries are ever served, so status isn't exposed.
     expect(res.body.gallery.status).toBeUndefined();

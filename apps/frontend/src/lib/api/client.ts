@@ -383,6 +383,8 @@ export interface PublicGalleryApi {
   description: string;
   slug: string;
   event_name: string | null;
+  /** Event date, YYYY-MM-DD. */
+  event_date: string | null;
   photo_count: number;
   published_at: string | null;
 }

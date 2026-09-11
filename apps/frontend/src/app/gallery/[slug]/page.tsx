@@ -12,14 +12,23 @@ import {
   LockKeyhole,
   Share2,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { toast } from "sonner";
 
 import { api, ApiError, type PublicGalleryApi, type PublicPhotoApi } from "@/lib/api/client";
+import { formatDate, formatNumber } from "@/lib/utils";
 import type { Photo } from "@/types";
 import { PinInput } from "@/components/gallery/pin-input";
 import { PhotoLightbox } from "@/components/photos/photo-lightbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
+import { fadeSlide, staggerContainer, riseItem } from "@/lib/motion";
+
+/*
+ * The customer gallery is always light — warm gallery paper, ink, one
+ * ultramarine accent — regardless of the signed-in app's theme. These are
+ * the Editorial Studio tokens pinned as literals so `.dark` never flips
+ * a client-facing page.
+ */
 
 /** Metadata the customer sees before and after unlocking — served by the backend. */
 type GalleryMeta = {
@@ -27,6 +36,8 @@ type GalleryMeta = {
   description: string;
   slug: string;
   eventName: string;
+  eventDate: string | null;
+  publishedAt: string | null;
   photoCount: number;
 };
 
@@ -44,6 +55,8 @@ function toMeta(g: PublicGalleryApi): GalleryMeta {
     description: g.description,
     slug: g.slug,
     eventName: g.event_name ?? g.name,
+    eventDate: g.event_date,
+    publishedAt: g.published_at,
     photoCount: g.photo_count,
   };
 }
@@ -128,14 +141,14 @@ export default function CustomerGalleryPage() {
   }
 
   return (
-    <div className="min-h-dvh bg-neutral-950 text-white">
+    <div className="min-h-dvh bg-[#faf9f6] text-[#1c1917]">
       {gate.state === "loading" && (
         <div className="mx-auto flex min-h-dvh max-w-5xl items-center justify-center px-6">
           <div className="w-full">
-            <Skeleton className="mx-auto h-8 w-52 bg-white/10" />
-            <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Skeleton className="mx-auto h-9 w-56 bg-[#f0ede6]" />
+            <div className="mt-10 grid grid-cols-2 gap-4 sm:grid-cols-3">
               {Array.from({ length: 6 }).map((_, i) => (
-                <Skeleton key={i} className="aspect-square rounded-lg bg-white/10" />
+                <Skeleton key={i} className="skeleton-shimmer aspect-[4/3] rounded-xl bg-[#f0ede6]" />
               ))}
             </div>
           </div>
@@ -214,19 +227,25 @@ function PinGate({
 }) {
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center px-6">
-      <div className="flex w-full max-w-sm flex-col items-center text-center animate-fade-up">
-        <p className="font-display text-lg font-semibold tracking-tight">FrameFlow</p>
-        <span className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1 text-xs font-medium backdrop-blur">
-          <LockKeyhole className="size-3" aria-hidden="true" /> Private gallery
+      <motion.div
+        variants={fadeSlide}
+        initial="hidden"
+        animate="show"
+        className="flex w-full max-w-sm flex-col items-center text-center"
+      >
+        <p className="font-display text-lg font-medium tracking-tight">FrameFlow</p>
+        <span className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-[#e6e1d6] bg-white px-3 py-1 shadow-hairline">
+          <LockKeyhole className="size-3 text-[#3d53d6]" aria-hidden="true" />
+          <span className="overline-label text-[#7a736a]">Private gallery</span>
         </span>
-        <h1 className="mt-6 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+        <h1 className="mt-7 font-display text-4xl font-medium tracking-tight text-balance sm:text-[2.75rem]">
           {meta.eventName}
         </h1>
-        <p className="mt-2 text-sm text-white/70">
+        <p className="mt-3 text-sm text-[#7a736a]">
           Enter the PIN provided by your photographer.
         </p>
 
-        <div className="mt-8">
+        <div className="mt-9">
           <PinInput
             value={pin}
             onValueChange={onPinChange}
@@ -239,33 +258,44 @@ function PinGate({
 
         <p aria-live="assertive" className="mt-4 min-h-5 text-sm">
           {error ? (
-            <span className="text-red-300">{message ?? "Incorrect PIN. Please try again."}</span>
+            <span className="text-[#b3271b]">{message ?? "Incorrect PIN. Please try again."}</span>
           ) : verifying ? (
-            <span className="inline-flex items-center gap-2 text-white/70">
+            <span className="inline-flex items-center gap-2 text-[#7a736a]">
               <Loader2 className="size-3.5 animate-spin" /> Verifying…
             </span>
           ) : null}
         </p>
 
-        <Button
-          size="lg"
+        <button
+          type="button"
           disabled={pin.length !== 6 || verifying}
           onClick={() => onComplete(pin)}
-          className="mt-2 w-full bg-white text-neutral-900 hover:bg-white/90"
+          className="mt-3 inline-flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-[#1c1917] text-sm font-medium text-[#faf9f6] transition-colors hover:bg-[#1c1917]/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d53d6] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {verifying ? <Loader2 className="animate-spin" /> : null}
+          {verifying ? <Loader2 className="size-4 animate-spin" /> : null}
           View gallery
-        </Button>
+        </button>
 
-        <p className="mt-8 text-xs text-white/50">
+        <p className="mt-9 text-xs leading-relaxed text-[#7a736a]">
           Photos stay private — only people with this link and PIN can see them.
         </p>
-      </div>
+      </motion.div>
     </div>
   );
 }
 
 /* ---------- Gallery view ---------- */
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="overline-label text-[#7a736a]">{label}</p>
+      <p className="mt-2 font-display text-2xl font-medium tracking-tight tabular-nums sm:text-3xl">
+        {value}
+      </p>
+    </div>
+  );
+}
 
 function GalleryView({
   meta,
@@ -291,57 +321,79 @@ function GalleryView({
   }
 
   return (
-    <div className="min-h-dvh">
-      <header className="sticky top-0 z-20 border-b border-white/10 bg-neutral-950/85 backdrop-blur">
+    <motion.div variants={staggerContainer(0.08)} initial="hidden" animate="show">
+      <motion.header
+        variants={fadeSlide}
+        className="sticky top-0 z-20 border-b border-[#e6e1d6] bg-[#faf9f6]/90 backdrop-blur"
+      >
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3.5 md:px-6">
           <div className="min-w-0 flex-1">
-            <p className="font-display text-lg font-semibold leading-tight tracking-tight">
+            <p className="overline-label truncate text-[#7a736a]">{meta.eventName}</p>
+            <p className="mt-0.5 truncate font-display text-lg font-medium leading-tight tracking-tight">
               {meta.name}
             </p>
-            <p className="text-xs text-white/60">
-              {meta.eventName} · {photos.length} photos
-            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              className="bg-white text-neutral-900 hover:bg-white/90"
-              onClick={share}
-            >
-              <Share2 /> <span className="hidden sm:inline">Share</span>
-            </Button>
-          </div>
+          <button
+            type="button"
+            onClick={share}
+            className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-full bg-[#1c1917] px-4 text-sm font-medium text-[#faf9f6] transition-colors hover:bg-[#1c1917]/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d53d6]"
+          >
+            <Share2 className="size-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Share</span>
+          </button>
         </div>
-      </header>
+      </motion.header>
 
-      <p className="mx-auto max-w-6xl px-4 pt-6 text-sm text-white/60 md:px-6">
-        {meta.description}
-      </p>
+      {/* Stats — the editorial numerals row */}
+      <motion.section
+        variants={fadeSlide}
+        aria-label="Gallery details"
+        className="mx-auto max-w-6xl border-b border-[#e6e1d6] px-4 py-7 md:px-6"
+      >
+        <div className="grid grid-cols-3 gap-4 sm:gap-10">
+          <Stat label="Photos" value={formatNumber(meta.photoCount)} />
+          <Stat label="Event" value={meta.eventDate ? formatDate(meta.eventDate) : "—"} />
+          <Stat label="Published" value={meta.publishedAt ? formatDate(meta.publishedAt) : "—"} />
+        </div>
+      </motion.section>
 
-      {/* Masonry grid */}
-      <div className="mx-auto max-w-6xl px-4 pb-20 pt-4 md:px-6">
-        <div className="columns-2 gap-3 [column-fill:_balance] sm:columns-3 lg:columns-4">
+      {meta.description && (
+        <motion.p
+          variants={fadeSlide}
+          className="mx-auto max-w-6xl px-4 pt-6 text-sm leading-relaxed text-[#7a736a] md:px-6"
+        >
+          {meta.description}
+        </motion.p>
+      )}
+
+      {/* Photographs — rounded mosaic, generous gutters */}
+      <motion.div
+        variants={staggerContainer(0.04, 0.1)}
+        className="mx-auto max-w-6xl px-4 pb-24 pt-7 md:px-6"
+      >
+        <div className="columns-2 gap-4 [column-fill:_balance] sm:columns-3 lg:columns-4">
           {photos.map((photo, index) => (
-            <button
-              key={photo.id}
-              type="button"
-              onClick={() => setLightboxIndex(index)}
-              className="group mb-3 block w-full break-inside-avoid overflow-hidden rounded-lg bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white cursor-pointer"
-              aria-label={`Open photo ${index + 1} of ${photos.length}`}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={photo.url}
-                alt={`${meta.eventName} — photo ${index + 1} of ${photos.length}`}
-                width={photo.width || undefined}
-                height={photo.height || undefined}
-                loading="lazy"
-                className="w-full transition-transform duration-300 group-hover:scale-[1.02]"
-              />
-            </button>
+            <motion.div key={photo.id} variants={riseItem} className="mb-4 break-inside-avoid">
+              <button
+                type="button"
+                onClick={() => setLightboxIndex(index)}
+                className="group block w-full cursor-pointer overflow-hidden rounded-xl bg-[#f0ede6] shadow-hairline transition-shadow duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d53d6] hover:shadow-lift"
+                aria-label={`Open photo ${index + 1} of ${photos.length}`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photo.url}
+                  alt={`${meta.eventName} — photo ${index + 1} of ${photos.length}`}
+                  width={photo.width || undefined}
+                  height={photo.height || undefined}
+                  loading="lazy"
+                  className="w-full transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
+                />
+              </button>
+            </motion.div>
           ))}
         </div>
-      </div>
+      </motion.div>
 
       <PhotoLightbox
         photos={photos}
@@ -351,7 +403,7 @@ function GalleryView({
         downloadEnabled
         title={meta.name}
       />
-    </div>
+    </motion.div>
   );
 }
 
@@ -367,18 +419,25 @@ function GalleryMessage({
   description: string;
 }) {
   return (
-    <div className="relative flex min-h-dvh flex-col items-center justify-center px-6 text-center animate-fade-up">
-      <div className="flex size-14 items-center justify-center rounded-full bg-white/10">
-        <Icon className="size-6 text-white/80" aria-hidden="true" />
-      </div>
-      <h1 className="mt-5 font-display text-2xl font-semibold tracking-tight">{title}</h1>
-      <p className="mt-2 max-w-md text-sm leading-relaxed text-white/60">{description}</p>
-      <Link
-        href="/"
-        className="mt-8 inline-flex items-center gap-1.5 rounded-md border border-white/20 px-4 py-2 text-sm font-medium text-white/85 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+    <div className="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
+      <motion.div
+        variants={fadeSlide}
+        initial="hidden"
+        animate="show"
+        className="flex flex-col items-center"
       >
-        <ArrowLeft className="size-4" /> Go to FrameFlow
-      </Link>
+        <div className="flex size-14 items-center justify-center rounded-full border border-[#e6e1d6] bg-white shadow-hairline">
+          <Icon className="size-6 text-[#7a736a]" aria-hidden="true" />
+        </div>
+        <h1 className="mt-5 font-display text-3xl font-medium tracking-tight">{title}</h1>
+        <p className="mt-2 max-w-md text-sm leading-relaxed text-[#7a736a]">{description}</p>
+        <Link
+          href="/"
+          className="mt-8 inline-flex items-center gap-1.5 rounded-full border border-[#e6e1d6] bg-white px-5 py-2.5 text-sm font-medium shadow-hairline transition-colors hover:bg-[#f0ede6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d53d6]"
+        >
+          <ArrowLeft className="size-4" aria-hidden="true" /> Go to FrameFlow
+        </Link>
+      </motion.div>
     </div>
   );
 }
