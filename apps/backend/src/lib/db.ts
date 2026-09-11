@@ -362,6 +362,38 @@ export async function getGalleryById(env: Env, id: string): Promise<DbGallery | 
   return result.rows[0] ?? null;
 }
 
+/**
+ * Public read: a PUBLISHED gallery by slug, joined with its event name.
+ * Draft galleries behave exactly like missing ones — the public surface
+ * must not reveal that a slug exists while unpublished.
+ */
+export async function getPublishedGalleryBySlug(
+  env: Env,
+  slug: string
+): Promise<(DbGallery & { event_name: string }) | null> {
+  const result = await getPool(env).query<DbGallery & { event_name: string }>(
+    `SELECT g.*, e.name AS event_name
+     FROM galleries g
+     JOIN events e ON e.id = g.event_id
+     WHERE g.slug = $1 AND g.status = 'published'`,
+    [slug]
+  );
+  return result.rows[0] ?? null;
+}
+
+/** Photos bound to a gallery, in curation order (no uploader attribution). */
+export async function listGalleryPhotos(env: Env, galleryId: string): Promise<DbPhoto[]> {
+  const result = await getPool(env).query<DbPhoto>(
+    `SELECT p.*
+     FROM photos p
+     JOIN gallery_photos gp ON gp.photo_id = p.id
+     WHERE gp.gallery_id = $1
+     ORDER BY gp.added_at ASC`,
+    [galleryId]
+  );
+  return result.rows;
+}
+
 /** Galleries of an event, newest first (event is already workspace-scoped). */
 export async function listEventGalleries(env: Env, eventId: string): Promise<DbGallery[]> {
   const result = await getPool(env).query<DbGallery>(

@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { randomInt } from "node:crypto";
+import { randomInt, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 import type { Env } from "../config/env.js";
@@ -15,6 +15,7 @@ import {
   getGalleryById,
   getPendingInvitationByEmail,
   getPhotoById,
+  getPublishedGalleryBySlug,
   getUserByClerkId,
   getUserById,
   getWorkspaceEvent,
@@ -26,6 +27,7 @@ import {
   listEventPhotos,
   listEventsForUser,
   listGalleryPhotoIds,
+  listGalleryPhotos,
   listPendingInvitationsForWorkspace,
   listWorkspaceUsers,
   markInvitationAccepted,
@@ -50,9 +52,11 @@ import { multerErrorHandler, photoUpload } from "../middleware/upload.js";
 import {
   ALLOWED_MIME_TYPES,
   deletePhotoQuietly,
+  photoDownloadUrl,
   photoUrl,
   uploadPhoto,
 } from "../lib/storage.js";
+import { clearFailures, isRateLimited, recordFailure } from "../lib/rate-limit.js";
 
 export interface CreateRouterOptions {
   env: Env;
@@ -79,6 +83,10 @@ const createGallerySchema = z.object({
   name: z.string().min(2).max(120),
   description: z.string().max(500).optional(),
   photo_ids: z.array(z.string().uuid()).min(1).max(500),
+});
+
+const unlockGallerySchema = z.object({
+  pin: z.string().regex(/^\d{6}$/, "PIN must be 6 digits"),
 });
 
 /**
@@ -651,7 +659,61 @@ export function createApiRouter({ env }: CreateRouterOptions): Router {
     res.json({ gallery: serializeGallery(published, photoCount) });
   }) as unknown as import("express").RequestHandler);
 
-  void requireRole;
+  // ------------------------------------------------------------------
+  // Public gallery surface (no Clerk auth — this is the customer link).
+  // The slug itself is unguessable enough for a shareable URL; the photos
+  // stay behind the server-verified PIN. Draft galleries 404 so the
+  // public surface never reveals an unpublished gallery exists.
+  // ------------------------------------------------------------------
+
+  /** Metadata only — enough to render the PIN screen, never the photos. */
+  router.get("/public/galleries/:slug", (async (req: Request, res: Response) => {
+    const gallery = await getPublishedGalleryBySlug(env, String(req.params.slug));
+    if (!gallery) {
+      res.status(404).json({ error: "Gallery not found" });
+      return;
+    }
+    const photoCount = (await listGalleryPhotoIds(env, gallery.id)).length;
+    res.json({ gallery: serializePublicGallery(gallery, photoCount) });
+  }) as unknown as import("express").RequestHandler);
+
+  /**
+   * Verify the PIN and return the gallery's photos. Rate limited per
+   * slug+IP: 5 wrong attempts per 15 minutes. PIN comparison is
+   * timing-safe; the PIN itself never appears in any response.
+   */
+  router.post("/public/galleries/:slug/unlock", (async (req: Request, res: Response) => {
+    const parsed = unlockGallerySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Enter the 6-digit PIN" });
+      return;
+    }
+    const slug = String(req.params.slug);
+    const key = `${slug}:${req.ip ?? "unknown"}`;
+    if (isRateLimited(key)) {
+      res.status(429).json({ error: "Too many incorrect attempts. Try again in 15 minutes." });
+      return;
+    }
+    const gallery = await getPublishedGalleryBySlug(env, slug);
+    if (!gallery) {
+      res.status(404).json({ error: "Gallery not found" });
+      return;
+    }
+    const given = Buffer.from(parsed.data.pin);
+    const expected = Buffer.from(gallery.pin);
+    if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+      recordFailure(key);
+      res.status(403).json({ error: "Incorrect PIN. Please try again." });
+      return;
+    }
+    clearFailures(key);
+    const photos = await listGalleryPhotos(env, gallery.id);
+    res.json({
+      gallery: serializePublicGallery(gallery, photos.length),
+      photos: photos.map((p) => serializePublicPhoto(p, env)),
+    });
+  }) as unknown as import("express").RequestHandler);
+
   return router;
 }
 
@@ -732,6 +794,37 @@ export function serializePhoto(p: DbPhoto, appwriteEnv: Env) {
     mime_type: p.mime_type,
     file_size: p.file_size,
     url: photoUrl(appwriteEnv, p.storage_file_id),
+    download_url: photoDownloadUrl(appwriteEnv, p.storage_file_id),
+    created_at: new Date(p.created_at).toISOString(),
+  };
+}
+
+/**
+ * Public-facing gallery shape for the customer surface: no PIN, no ids of
+ * internal rows, no workspace or author information — only what the PIN
+ * screen and gallery view render.
+ */
+export function serializePublicGallery(
+  g: DbGallery & { event_name?: string | null },
+  photoCount: number
+) {
+  return {
+    name: g.name,
+    description: g.description,
+    slug: g.slug,
+    event_name: g.event_name ?? null,
+    photo_count: photoCount,
+    published_at: g.published_at ? new Date(g.published_at).toISOString() : null,
+  };
+}
+
+/** Public photo shape: no uploader attribution, no event/workspace linkage. */
+export function serializePublicPhoto(p: DbPhoto, appwriteEnv: Env) {
+  return {
+    id: p.id,
+    filename: p.filename,
+    url: photoUrl(appwriteEnv, p.storage_file_id),
+    download_url: photoDownloadUrl(appwriteEnv, p.storage_file_id),
     created_at: new Date(p.created_at).toISOString(),
   };
 }

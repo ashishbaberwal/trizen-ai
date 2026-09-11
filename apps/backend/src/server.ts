@@ -36,8 +36,9 @@ export function createApp() {
 
   const requireAuthMiddleware = requireAuth(env);
   app.use("/api/v1", (req: Request, res: Response, next: NextFunction) => {
-    // Public routes within /api/v1 skip authentication.
-    if (req.path === "/health") {
+    // Public routes within /api/v1 skip authentication: liveness, and the
+    // customer gallery surface (PIN-verified inside its own handlers).
+    if (req.path === "/health" || req.path.startsWith("/public/")) {
       next();
       return;
     }

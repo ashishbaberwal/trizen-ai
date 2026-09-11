@@ -102,3 +102,13 @@ export function photoUrl(env: Env, storageFileId: string): string {
   const base = env.APPWRITE_ENDPOINT.replace(/\/v1\/?$/, "");
   return `${base}/v1/storage/buckets/${env.APPWRITE_BUCKET_ID}/files/${storageFileId}/view?project=${env.APPWRITE_PROJECT_ID}`;
 }
+
+/**
+ * Download variant of the photo URL. Appwrite's /download endpoint serves
+ * `Content-Disposition: attachment` with the original filename, so browsers
+ * download instead of navigating — no API key involved, same as photoUrl.
+ */
+export function photoDownloadUrl(env: Env, storageFileId: string): string {
+  const base = env.APPWRITE_ENDPOINT.replace(/\/v1\/?$/, "");
+  return `${base}/v1/storage/buckets/${env.APPWRITE_BUCKET_ID}/files/${storageFileId}/download?project=${env.APPWRITE_PROJECT_ID}`;
+}
