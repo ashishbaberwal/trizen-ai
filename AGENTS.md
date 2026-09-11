@@ -81,6 +81,12 @@ docker run -d --name ff-frontend --network ffnet \
   frameflow-frontend
 ```
 
+> **Known broken (do not trust this runbook yet):** `NEXT_PUBLIC_*` vars are
+> inlined at *build* time, so `-e NEXT_PUBLIC_API_URL=...` at `docker run`
+> cannot work — the frontend image needs it as a build arg. The backend image
+> also has an open ESM/CJS mismatch in its Dockerfile. Fix the Dockerfiles
+> before using Docker for anything real.
+
 Only `frontend` and `backend` are Dockerized. Clerk, Supabase and Appwrite are
 external managed services — never containerize them. Never hardcode
 `localhost` into production Docker configuration.
@@ -130,8 +136,8 @@ Rules:
 
 ## Appwrite (Storage)
 
-- Project: `frameflow` (region `syd`), bucket: `photos`
-  (image extensions only, 50 MB max, encryption + antivirus + transformations on).
+- Project: `frameflow-edu` (region `syd`), bucket: `photos`
+  (image extensions only, 25 MB max, encryption + antivirus + transformations on).
 - API key: backend-only, scope limited to `buckets.read`, `files.read`, `files.write`.
 - Client: `apps/backend/src/lib/storage.ts` (node-appwrite, server-side only).
 - Binary images live in Appwrite; their metadata belongs in PostgreSQL.
@@ -144,7 +150,14 @@ Rules:
   - `GET /health` — liveness (public)
   - `GET /api/v1/health` — liveness + DB check (public; 503 when degraded)
   - `GET /api/v1/me` — verified Clerk identity + app role (401 without token)
-  - `GET /api/v1/admin/ping` — ADMIN-role smoke endpoint
+  - `/api/v1/team-members` (+ `invite`, `:id/role`, `:id`) — workspace team management (ADMIN)
+  - `/api/v1/events` CRUD — workspace-scoped; members see only assigned events (403)
+  - `/api/v1/events/:id/team-members` — event assignment (ADMIN writes, members read)
+  - `POST /api/v1/events/:eventId/photos`, `GET .../photos`, `DELETE /api/v1/photos/:photoId`
+    — binaries to Appwrite, metadata to Postgres
+  - `/api/v1/events/:id/galleries`, `POST /api/v1/galleries/:id/publish` — curation + publishing (ADMIN)
+  - `GET /api/v1/public/galleries/:slug`, `POST /api/v1/public/galleries/:slug/unlock`
+    — customer surface (no Clerk auth; server-verified PIN, rate limited; drafts 404)
 - Errors return `{ "error": "..." }`; internals never leak into responses.
 
 ## Frontend ↔ Backend
@@ -216,6 +229,13 @@ use a `pending:<email>` placeholder that never collides with a real Clerk ID.
 
 ## What NOT To Build Yet
 
-Photo upload to Appwrite, photo selection, gallery publishing, PIN
-generation, downloads, thumbnails, pagination — all come in later phases.
-Do not over-engineer ahead of the plan.
+The core loop (events → uploads → curation → publish → customer PIN view)
+is live end to end. Deliberately still open — do not build ahead of the plan:
+
+- ZIP/bulk download of a whole gallery (per-photo download works today)
+- Thumbnails / Appwrite transformations in the gallery grid, pagination
+- Gallery expiry + unpublish (the publish endpoint has no reverse yet)
+- PIN hashing at rest (PINs are plaintext in `galleries.pin`; changing this
+  needs a coordinated migration + deploy — ask before touching remote DBs)
+- Redis/Postgres-backed rate limiting if the API ever runs multi-instance
+  (the PIN limiter in `src/lib/rate-limit.ts` is in-memory, per process)

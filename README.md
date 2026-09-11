@@ -1,159 +1,53 @@
-# Turborepo starter
+# FrameFlow (trizen-ai)
 
-This Turborepo starter is maintained by the Turborepo core team.
+A photography / event-team platform: admins create events and manage team
+members, team members upload photos, and customers open published,
+PIN-protected galleries through a shareable link.
 
-## Using this example
+## Monorepo layout
 
-Run the following command:
-
-```sh
-npx create-turbo@latest
+```
+apps/
+  frontend/    Next.js 16 (App Router) + Tailwind 4 + shadcn-style UI  → :3000
+  backend/     Express 5 + TypeScript API                              → :4000
+packages/      Shared eslint / tsconfig / ui scaffolding
+supabase/      Version-controlled SQL migrations (PostgreSQL schema)
 ```
 
-## What's inside?
+Architecture rules, service boundaries, and security requirements live in
+[AGENTS.md](AGENTS.md) — read it before changing anything.
 
-This Turborepo includes the following packages/apps:
-
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `@next/eslint-plugin-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo build
+```
+Browser → Next.js (:3000) → Express (:4000)
+                              ├── Clerk    → auth (identity, sessions)
+                              ├── Supabase → PostgreSQL (metadata only)
+                              └── Appwrite → photo storage (binaries only)
 ```
 
-Without global `turbo`, use your package manager:
+## Getting started
+
+Requires **Bun** and Node ≥ 24. Copy the `.env.example` files to
+`.env.local` in both apps and fill in the Clerk / Supabase / Appwrite values.
 
 ```sh
-cd my-turborepo
-npx turbo build
-bun exec turbo build
-bun exec turbo build
+bun install
+
+bun run dev --filter=frontend   # Next.js on :3000
+bun run dev --filter=backend    # Express on :4000 (tsx watch)
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+## Checks
 
 ```sh
-turbo build --filter=docs
+bun run lint          # ESLint everywhere (turbo)
+bun run check-types   # tsc --noEmit everywhere
+bun run build         # production build everywhere
+bun run test          # backend vitest suite
+
+cd apps/backend && TEST_DATABASE_URL=postgres://… bun run test
 ```
 
-Without global `turbo`:
-
-```sh
-npx turbo build --filter=docs
-bun exec turbo build --filter=docs
-bun exec turbo build --filter=docs
-```
-
-### Develop
-
-To develop all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo dev
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo dev
-bun exec turbo dev
-bun exec turbo dev
-```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo dev --filter=web
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo dev --filter=web
-bun exec turbo dev --filter=web
-bun exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-bun exec turbo login
-bun exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-bun exec turbo link
-bun exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+The backend test suites hit a real Postgres (Clerk and Appwrite are mocked);
+without `TEST_DATABASE_URL` the database-backed suites are skipped. To run
+them locally, create an empty database, apply the files in
+`supabase/migrations/`, and point `TEST_DATABASE_URL` at it.
